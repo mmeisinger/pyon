@@ -81,6 +81,7 @@ class ResourceAgentEvent(BaseEnum):
     RESUME = 'RESOURCE_AGENT_EVENT_RESUME'
     GO_COMMAND = 'RESOURCE_AGENT_EVENT_GO_COMMAND'
     GO_DIRECT_ACCESS = 'RESOURCE_AGENT_EVENT_GO_DIRECT_ACCESS'
+    EXECUTE_DIRECT_ACCESS = 'RESOURCE_AGENT_EXECUTE_DIRECT_ACCESS'
     GET_RESOURCE = 'RESOURCE_AGENT_EVENT_GET_RESOURCE'
     SET_RESOURCE = 'RESOURCE_AGENT_EVENT_SET_RESOURCE'
     EXECUTE_RESOURCE = 'RESOURCE_AGENT_EVENT_EXECUTE_RESOURCE'
@@ -107,6 +108,7 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
     resource agent service interface. This base class captures the mechanisms
     common to all resource agents and is subclassed with implementations
     specific for instrument agents, user agents, etc.
+    Pointless comment.
     """
 
     ##############################################################
@@ -193,31 +195,48 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
         # Create event publisher.
         self._event_publisher = EventPublisher()
 
+        # Retrieve stored states.
+        try:
+            state = self._get_state('agent_state') or ResourceAgentState.UNINITIALIZED
+            prev_state = self._get_state('agent_state') or ResourceAgentState.UNINITIALIZED
+
+        except Exception as ex:
+            log.error('Exception retrieving agent state in on_init: %s.', str(ex))
+            log.exception('Exception retrieving agent state in on_init.')
+            state = ResourceAgentState.UNINITIALIZED
+            prev_state = ResourceAgentState.UNINITIALIZED
+        else:
+            log.info('Got agent state: %s', state)
+            log.info('Got agent prior state: %s', prev_state)
+
+        # Load state.
+        try:
+            self._load_state()
+        except Exception as ex:
+            log.error('Error loading state in on_init: %s', str(ex))
+            log.exception('Error loading state in on_init.')
+
         # Start state machine.
-        state = self._get_state('agent_state')
-        prev_state = self._get_state('agent_state')
-        
         self._initial_state = self.CFG.get('initial_state', None) or self._initial_state
         self._fsm.start(self._initial_state)
-
-        bootmode = self.CFG.get_safe('bootmode')
-        self._load_state()
 
         # If configured, wipe out the prior agent memory.
         restored_aparams = []
         unrestored_aparams = []
-        print '### bootmode = ' + str(bootmode)
+        bootmode = self.CFG.get_safe('bootmode')
         log.info('Restoring aparams: bootmode=%s', str(bootmode))
         if bootmode == 'restart':
             (restored_aparams, unrestored_aparams) = self._restore_aparams()
-            self._restore_resource(state, prev_state)            
+            self._restore_resource(state, prev_state)
         else:
             unrestored_aparams = self.get_agent_parameters()
-            self._get_state_vector().clear()        
-        
-        self._configure_aparams(unrestored_aparams)
+            try:
+                self._get_state_vector().clear()
+            except Exception as ex:
+                log.error('Error clearing state in on_init: %s', str(ex))
+                log.exception('Error clearing state in on_init.')
 
-            
+        self._configure_aparams(unrestored_aparams)
 
     def on_quit(self):
         """
@@ -441,7 +460,12 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
                 val = get_func()
             else:
                 val = getattr(self, key)
-            self._set_state(key, val)
+
+            try:
+                self._set_state(key, val)
+            except Exception as ex:
+                log.error('Exception setting state: %s', str(ex))
+                log.exception('Could not set state in set_agent.')
 
     def get_agent_state(self, resource_id=''):
         """
@@ -472,6 +496,8 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
 
         try:
             result = self._fsm.on_event(cmd, *args, **kwargs)
+            #if not isinstance(result, dict):
+            #    result = {'result' : result}
             cmd_result.result = result
             self._on_command('execute_agent', cmd, args, kwargs, result)
 
@@ -563,6 +589,8 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
         try:
             result = self._fsm.on_event(
                 ResourceAgentEvent.EXECUTE_RESOURCE, cmd, *args, **kwargs)
+            #if not isinstance(result, dict):
+            #    result = {'result' : result}
             cmd_result.result = result
             self._on_command('execute_resource', cmd, args, kwargs, result)
 
@@ -605,10 +633,10 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
             self._set_state('agent_state', state)
             self._flush_state()
         except Exception as ex:
-            log.info('Exception setting state: %s', str(ex))
-            print 'Exception setting state: ' + str(ex)
-            log.exception('######## could not set state on enter.')
-            raise
+            log.error('Exception setting state: %s', str(ex))
+            log.exception('Could not set state in _common_state_enter.')
+
+        new_state = self._get_state('agent_state')
 
         self._on_state_enter(state)
 
@@ -626,8 +654,13 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
         log.info('Resource agent %s leaving state: %s, time: %s',
                  self.id, state, get_ion_ts())
 
-        self._set_state('prev_agent_state', state)
-        self._on_state_exit(state)
+        try:
+            self._set_state('prev_agent_state', state)
+            self._on_state_exit(state)
+        except Exception as ex:
+            log.error('Error persisting agent state in _common_state_exit: %s',
+                      str(ex))
+            log.exception('Could not set state in _common_state_exit.')
 
     def _on_state_exit(self, state):
         """
@@ -717,7 +750,13 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
         restored = []
         unrestored = []
         for key in aparams:
-            val = self._get_state('aparam_' + key)
+            try:
+                val = self._get_state('aparam_' + key)
+            except Exception as ex:
+                val = None
+                log.error('Error getting state in _restore_aparams: %s', str(ex))
+                log.exception('Error getting state in _restore_aparam.')
+
             if val:
                 set_key = 'aparam_set_' + key
                 set_func = getattr(self, set_key, None)
@@ -726,14 +765,11 @@ class ResourceAgent(BaseResourceAgent, StatefulProcessMixin):
                 else:
                     setattr(self, 'aparam_' + key, val)
                 restored.append(key)
-                log.info('### Restored aparam: %s, %s', key, val)
-                print '### Restored aparam: %s, %s' % (key, val)
+                log.info('Restored aparam: %s, %s', key, val)
             else:
                 unrestored.append(key)
         log.info('Restored aparams: %s', str(restored))
         log.info('Unrestored aparams: %s', str(unrestored))
-        print 'Restored aparams: %s' % str(restored)
-        print 'Unrestored aparams: %s' % str(unrestored)
         return (restored, unrestored)
         
     def _configure_aparams(self, aparams=[]):
