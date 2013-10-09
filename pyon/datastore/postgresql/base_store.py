@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""Datastore for postgresql"""
+"""Datastore for PostgreSQL"""
 
 __author__ = 'Michael Meisinger'
 
@@ -41,8 +41,8 @@ def gevent_wait_callback(conn, timeout=None):
             raise OperationalError(
                 "Bad result from poll: %r" % state)
 
-
 extensions.set_wait_callback(gevent_wait_callback)
+# End Gevent Monkey patching
 
 
 class PostgresDataStore(DataStore):
@@ -205,7 +205,12 @@ class PostgresDataStore(DataStore):
         Delete the datastore with the given name.  This is
         equivalent to deleting a database from a database server.
         """
-        if not datastore_name.startswith(self.scope):
+        if datastore_name is None:
+            if self.datastore_name:
+                datastore_name = self._get_datastore_name(datastore_name)
+            else:
+                raise BadRequest("Not datastore_name provided")
+        elif not datastore_name.startswith(self.scope):
             datastore_name = self._get_datastore_name(datastore_name)
         log.info('Deleting datastore %s' % datastore_name)
 
@@ -708,9 +713,9 @@ class PostgresDataStore(DataStore):
         #    rows = [row for row in rows if row[2].startswith(start_key[3])]
 
         if id_only:
-            res_rows = [(self._prep_id(row[0]), [], self._prep_doc(row[-1]), None) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [], self._prep_doc(row[-1])) for row in rows]
         else:
-            res_rows = [(self._prep_id(row[0]), [], self._prep_doc(row[-1]), self._prep_doc(row[-1])) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [], self._prep_doc(row[-1])) for row in rows]
 
         return res_rows
 
@@ -737,9 +742,9 @@ class PostgresDataStore(DataStore):
             rows = cur.fetchall()
 
         if id_only:
-            res_rows = [(self._prep_id(row[0]), [], None, None) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [], None) for row in rows]
         else:
-            res_rows = [(self._prep_id(row[0]), [], None, self._prep_doc(row[-1])) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [], self._prep_doc(row[-1])) for row in rows]
 
         return res_rows
 
@@ -775,9 +780,9 @@ class PostgresDataStore(DataStore):
 
 
         if id_only:
-            res_rows = [(self._prep_id(row[0]), [None, None, row[4]], None, None) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [None, None, row[4]], None) for row in rows]
         else:
-            res_rows = [(self._prep_id(row[0]), [None, None, row[4]], None, self._prep_doc(row[-1])) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [None, None, row[4]], self._prep_doc(row[-1])) for row in rows]
 
         return res_rows
 
@@ -856,9 +861,9 @@ class PostgresDataStore(DataStore):
             rows = cur.fetchall()
 
         if id_only:
-            res_rows = [(self._prep_id(row[0]), [], row[1], None) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [], row[1]) for row in rows]
         else:
-            res_rows = [(self._prep_id(row[0]), [], row[1], self._prep_doc(row[-1])) for row in rows]
+            res_rows = [(self._prep_id(row[0]), [], self._prep_doc(row[-1])) for row in rows]
 
         return res_rows
 
@@ -869,9 +874,11 @@ class PostgresDataStore(DataStore):
         return internal_id.replace("-", "")
 
     def _prep_doc(self, internal_doc):
+        # With latest psycopg2, this is not necessary anymore and can be removed
         if internal_doc is None:
             return None
-        doc = json.loads(internal_doc)
+        #doc = json.loads(internal_doc)
+        doc = internal_doc
         return doc
 
 

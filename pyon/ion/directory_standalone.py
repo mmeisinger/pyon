@@ -191,5 +191,5 @@ class DirectoryStandalone(object):
             res = self.datastore.find_docs_by_view('directory', 'by_path',
                 start_key=start_key, end_key=end_key, id_only=True, **kwargs)
 
-        match = [value for docid, indexkey, value, doc in res]
+        match = [value for docid, indexkey, value in res]
         return match

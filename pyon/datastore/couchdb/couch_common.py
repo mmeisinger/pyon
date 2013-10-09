@@ -328,9 +328,9 @@ class AbstractCouchDataStore(object):
             rows = ds.view(view_doc, **view_args)
 
         if id_only:
-            res_rows = [(row['id'], row['key'], row.get('value', None), None) for row in rows]
+            res_rows = [(row['id'], row['key'], row.get('value', None)) for row in rows]
         else:
-            res_rows = [(row['id'], row['key'], row.get('value', None), self._get_row_doc(row)) for row in rows]
+            res_rows = [(row['id'], row['key'], self._get_row_doc(row)) for row in rows]
 
         self._count(find_by_view_call=1, find_by_view_obj=len(res_rows))
 

@@ -111,6 +111,7 @@ class Directory(object):
         find_key = [orgname, key, parent]
         view_res = self.dir_store.find_by_view('directory', 'by_key', key=find_key, id_only=True, convert_value=True)
 
+        print "######", list(view_res)
         match = [doc for docid, index, doc in view_res]
         if len(match) > 1:
             log.warn("More than one directory entry found for key %s" % path)

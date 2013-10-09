@@ -509,15 +509,14 @@ class PyonCouchDataStoreMixin(AbstractCouchDataStore):
         @param id_only  if True, the 4th element of each triple is the document
         @param convert_doc  if True, make IonObject out of doc
         @param convert_value  if True, make IonObject out of value
-        @retval Returns a list of 4-tuples: (document id, index key, index value, document)
+        @retval Returns a list of 3-tuples: (document id, index key, index value or document)
         """
         res_rows = self.find_docs_by_view(design_name=design_name, view_name=view_name, key=key, keys=keys,
                                           start_key=start_key, end_key=end_key, id_only=id_only, **kwargs)
 
         res_rows = [(rid, key,
-                     self._persistence_dict_to_ion_object(value) if convert_value and isinstance(value, dict) else value,
                      self._persistence_dict_to_ion_object(doc) if convert_doc and isinstance(doc, dict) else doc)
-                    for rid,key,value,doc in res_rows]
+                    for rid, key, doc in res_rows]
 
         log.debug("find_by_view() found %s objects" % (len(res_rows)))
         return res_rows
