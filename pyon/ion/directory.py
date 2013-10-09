@@ -109,9 +109,8 @@ class Directory(object):
         parent, key = path.rsplit("/", 1)
         parent = parent or "/"
         find_key = [orgname, key, parent]
-        view_res = self.dir_store.find_by_view('directory', 'by_key', key=find_key, id_only=True, convert_value=True)
+        view_res = self.dir_store.find_by_view('directory', 'by_key', key=find_key, id_only=True, convert_doc=True)
 
-        print "######", list(view_res)
         match = [doc for docid, index, doc in view_res]
         if len(match) > 1:
             log.warn("More than one directory entry found for key %s" % path)
@@ -290,15 +289,15 @@ class Directory(object):
             start_key = [self.orgname, parent, 0]
             end_key = [self.orgname, parent]
             res = self.dir_store.find_by_view('directory', 'by_parent',
-                start_key=start_key, end_key=end_key, id_only=True, convert_value=True, **kwargs)
+                start_key=start_key, end_key=end_key, id_only=True, convert_doc=True, **kwargs)
         else:
             path = parent[1:].split("/")
             start_key = [self.orgname, path, 0]
             end_key = [self.orgname, list(path) + ["ZZZZZZ"]]
             res = self.dir_store.find_by_view('directory', 'by_path',
-                start_key=start_key, end_key=end_key, id_only=True, convert_value=True, **kwargs)
+                start_key=start_key, end_key=end_key, id_only=True, convert_doc=True, **kwargs)
 
-        match = [value for docid, indexkey, value, doc in res]
+        match = [value for docid, indexkey, value in res]
         return match
 
     def find_by_key(self, key=None, parent='/', **kwargs):
@@ -314,9 +313,9 @@ class Directory(object):
         start_key = [self.orgname, key, parent]
         end_key = [self.orgname, key, parent + "ZZZZZZ"]
         res = self.dir_store.find_by_view('directory', 'by_key',
-            start_key=start_key, end_key=end_key, id_only=True, convert_value=True, **kwargs)
+            start_key=start_key, end_key=end_key, id_only=True, convert_doc=True, **kwargs)
 
-        match = [value for docid, indexkey, value, doc in res]
+        match = [value for docid, indexkey, value in res]
         return match
 
     def find_by_value(self, subtree='/', attribute=None, value=None, **kwargs):
@@ -330,9 +329,9 @@ class Directory(object):
         start_key = [self.orgname, attribute, value, subtree]
         end_key = [self.orgname, attribute, value, subtree + "ZZZZZZ"]
         res = self.dir_store.find_by_view('directory', 'by_attribute',
-                        start_key=start_key, end_key=end_key, id_only=True, convert_value=True, **kwargs)
+                        start_key=start_key, end_key=end_key, id_only=True, convert_doc=True, **kwargs)
 
-        match = [value for docid, indexkey, value, doc in res]
+        match = [value for docid, indexkey, value in res]
         return match
 
     def remove_child_entries(self, parent, delete_parent=False):

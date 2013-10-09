@@ -591,7 +591,7 @@ class PostgresPyonDataStore(PostgresDataStore):
         return self._prepare_find_return(rows, res_assocs, id_only=id_only)
 
     def find_by_view(self, design_name, view_name, key=None, keys=None, start_key=None, end_key=None,
-                     id_only=True, convert_doc=True, convert_value=True, **kwargs):
+                     id_only=True, convert_doc=True, **kwargs):
         """
         Generic find function using a defined index
         @param design_name  design document
@@ -602,7 +602,6 @@ class PostgresPyonDataStore(PostgresDataStore):
         @param end_key  find range end value
         @param id_only  if True, the 4th element of each triple is the document
         @param convert_doc  if True, make IonObject out of doc
-        @param convert_value  if True, make IonObject out of value
         @retval Returns a list of 3-tuples: (document id, index key, index value or document)
         """
         res_rows = self.find_docs_by_view(design_name=design_name, view_name=view_name, key=key, keys=keys,

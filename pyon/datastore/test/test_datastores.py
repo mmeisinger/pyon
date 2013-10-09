@@ -108,7 +108,7 @@ class Test_DataStores(IonIntegrationTestCase):
             data_store.delete({"foo": "bar"})
 
         # Should see new data
-        self.assertIn('ion_test_ds', data_store.list_datastores())
+        self.assertTrue([1 for dsn in data_store.list_datastores() if dsn.endswith('ion_test_ds')])
 
         # Something should be returned
         self.assertTrue(data_store.info_datastore() is not None)
@@ -312,7 +312,7 @@ class Test_DataStores(IonIntegrationTestCase):
         data_store.delete_datastore()
 
         # Assert data store is now gone
-        self.assertNotIn('ion_test_ds', data_store.list_datastores())
+        self.assertFalse([1 for dsn in data_store.list_datastores() if dsn.endswith('ion_test_ds')])
 
     def test_datastore_attach(self):
         data_store = self.ds_class(datastore_name='ion_test_ds', profile=DataStore.DS_PROFILE.RESOURCES, scope=get_sys_name())
