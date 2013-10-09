@@ -310,6 +310,9 @@ class PyonCouchDataStoreMixin(AbstractCouchDataStore):
             return res_ids, res_assocs
         else:
             res_docs = [self._persistence_dict_to_ion_object(self._get_row_doc(row)) for row in rows]
+            if [True for doc in res_docs if doc is None]:
+                res_ids = [row.id for row in rows]
+                log.error("Datastore returned None docs despite include_docs==True.\nids=%s\ndocs=%s\nassocs=%s", res_ids, res_docs, res_assocs)
             return res_docs, res_assocs
 
     def find_resources(self, restype="", lcstate="", name="", id_only=True):

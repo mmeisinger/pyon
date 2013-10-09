@@ -506,7 +506,8 @@ class PostgresDataStore(DataStore):
                 raise Inconsistent('Object with id %s has %s values.' % (doc_id, len(doc_list)))
 
             doc_json = doc_list[0][0]
-            doc = json.loads(doc_json)
+            #doc = json.loads(doc_json)
+            doc = doc_json
 
         return doc
 

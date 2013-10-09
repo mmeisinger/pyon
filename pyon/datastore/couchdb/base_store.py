@@ -7,7 +7,8 @@ __author__ = 'Thomas R. Lennan, Michael Meisinger'
 
 from uuid import uuid4
 import couchdb
-from couchdb.http import PreconditionFailed, ResourceConflict, ResourceNotFound
+from couchdb.http import PreconditionFailed, ResourceConflict, ResourceNotFound, ServerError
+import gevent
 
 from pyon.datastore.couchdb.couch_common import AbstractCouchDataStore
 from pyon.datastore.couchdb.views import get_couchdb_view_designs
@@ -59,9 +60,15 @@ class CouchDataStore(AbstractCouchDataStore):
         """
         Close any connections required for this datastore.
         """
-        log.info("Closing connection to CouchDB")
-        map(lambda x: map(lambda y: y.close(), x), self.server.resource.session.conns.values())
-        self.server.resource.session.conns = {}     # just in case we try to reuse this, for some reason
+        log.trace("Closing connection to %s", self.datastore_name)
+        # Compatiblity between couchdb client 0.8 and 0.9
+        if hasattr(self.server.resource.session, 'conns'):
+            conns = self.server.resource.session.conns
+            self.server.resource.session.conns = {}     # just in case we try to reuse this, for some reason
+        else:
+            conns = self.server.resource.session.connection_pool.conns
+            self.server.resource.session.connection_pool.conns = {}     # just in case we try to reuse this, for some reason
+        map(lambda x: map(lambda y: y.close(), x), conns.values())
 
 
     # -------------------------------------------------------------------------
@@ -86,6 +93,8 @@ class CouchDataStore(AbstractCouchDataStore):
             raise NotFound("Datastore '%s' does not exist" % datastore_name)
         except ValueError:
             raise BadRequest("Datastore name '%s' invalid" % datastore_name)
+        except ServerError as se:
+            raise BadRequest("Data store name %s invalid" % datastore_name)
 
     def _create_datastore(self, datastore_name):
         try:
@@ -94,6 +103,11 @@ class CouchDataStore(AbstractCouchDataStore):
             raise BadRequest("Datastore with name %s already exists" % datastore_name)
         except ValueError:
             raise BadRequest("Datastore name %s invalid" % datastore_name)
+        except ServerError as se:
+            if se.message[1][0] == 'illegal_database_name':
+                raise BadRequest("Data store name %s invalid" % datastore_name)
+            else:
+                raise
 
     def delete_datastore(self, datastore_name=None):
         try:
@@ -102,6 +116,11 @@ class CouchDataStore(AbstractCouchDataStore):
             raise NotFound('Datastore %s does not exist' % datastore_name)
         except ValueError:
             raise BadRequest("Datastore name %s invalid" % datastore_name)
+        except ServerError as se:
+            if se.message[1][0] == 'illegal_database_name':
+                raise BadRequest("Data store name %s invalid" % datastore_name)
+            else:
+                raise
 
     def list_datastores(self):
         """
@@ -221,6 +240,9 @@ class CouchDataStore(AbstractCouchDataStore):
             if doc is None:
                 raise NotFound('Object with id %s does not exist.' % doc_id)
         else:
+            # There was an issue with couchdb_python 0.8 and concurrent use of this library
+            # See https://code.google.com/p/couchdb-python/issues/detail?id=204
+            # Fixed in client 0.9
             doc = ds.get(doc_id, rev=rev_id)
             if doc is None:
                 raise NotFound('Object with id %s does not exist.' % doc_id)
@@ -355,8 +377,15 @@ class CouchDataStore(AbstractCouchDataStore):
             # View exists
             old_design = ds[doc_name]
             if not keepviews:
-                del ds[doc_name]
-                ds[doc_name] = dict(views=design_doc)
+                try:
+                    try:
+                        del ds[doc_name]
+                    except ResourceNotFound:
+                        pass
+                    ds[doc_name] = dict(views=design_doc)
+                except Exception as ex:
+                    # In case this gets executed concurrently and 2 processes perform the same creates
+                    log.warn("Error defining datastore %s view %s (concurrent create?): %s", datastore_name, doc_name, str(ex))
             else:
                 ddiff = DictDiffer(old_design.get("views", {}), design_doc)
                 if ddiff.changed():

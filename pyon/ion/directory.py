@@ -118,11 +118,6 @@ class Directory(object):
             return recent_match
         elif match:
             return match[0]
-        # From postgres branch
-        #if len(view_res) > 1:
-        #    raise Inconsistent("More than one directory entry found for key %s" % path)
-        #elif view_res:
-        #    return view_res[0][2]  # First value
         return None
 
     def _cleanup_outdated_entries(self, dir_entries, common="key"):
