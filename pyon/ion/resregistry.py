@@ -464,9 +464,9 @@ class ResourceRegistry(object):
         assoc_list = self.find_associations(subject_id, predicate, object_id, id_only=False)
         if len(assoc_list) != 0:
             assoc = assoc_list[0]
-            print "**** Found associations:"
-            import pprint
-            pprint.pprint(assoc_list)
+            #print "**** Found associations:"
+            #import pprint
+            #pprint.pprint(assoc_list)
             raise BadRequest("Association between %s and %s with predicate %s already exists" % (subject_id, object_id, predicate))
 
         assoc = IonObject("Association",
@@ -486,10 +486,10 @@ class ResourceRegistry(object):
             assoc_id_list = self.find_associations(subject=subject, predicate=predicate, obj=obj, id_only=True)
             success = True
             for aid in assoc_id_list:
-                success = success and self.delete(aid)
+                success = success and self.rr_store.delete(aid, object_type="Association")
             return success
         else:
-            return self.rr_store.delete(association)
+            return self.rr_store.delete(association, object_type="Association")
 
     def _is_in_association(self, obj_id):
         if not obj_id:

@@ -102,18 +102,18 @@ class PostgresPyonDataStore(PostgresDataStore):
 
         return obj_list
 
-    def delete(self, obj, datastore_name=""):
+    def delete(self, obj, datastore_name="", object_type=None):
         if not isinstance(obj, IonObjectBase) and not isinstance(obj, str):
             raise BadRequest("Obj param is not instance of IonObjectBase or string id")
         if type(obj) is str:
-            self.delete_doc(obj, datastore_name=datastore_name)
+            self.delete_doc(obj, datastore_name=datastore_name, object_type=object_type)
         else:
             if '_id' not in obj:
                 raise BadRequest("Doc must have '_id'")
             if '_rev' not in obj:
                 raise BadRequest("Doc must have '_rev'")
             self.delete_doc(self._ion_object_to_persistence_dict(obj),
-                            datastore_name=datastore_name)
+                            datastore_name=datastore_name, object_type=object_type)
 
     def delete_mult(self, object_ids, datastore_name=None):
         return self.delete_doc_mult(object_ids, datastore_name)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from pyon.datastore.datastore import DatastoreManager
 
 __author__ = 'Dave Foster <dfoster@asascience.com>, Michael Meisinger'
 __license__ = 'Apache 2.0'
@@ -14,9 +13,9 @@ from unittest import SkipTest
 
 from pyon.core import bootstrap
 from pyon.core.bootstrap import IonObject
-from pyon.core.exception import BadRequest
+from pyon.core.exception import BadRequest, FilesystemError, StreamingError, CorruptionError
+from pyon.datastore.datastore import DatastoreManager, DataStore
 from pyon.ion.event import EventPublisher, EventSubscriber, EventRepository, handle_stream_exception
-from pyon.util.async import spawn
 from pyon.util.log import log
 from pyon.util.containers import get_ion_ts, DotDict
 from pyon.util.int_test import IonIntegrationTestCase
@@ -24,7 +23,6 @@ from pyon.util.unit_test import IonUnitTestCase
 
 from interface.objects import Event, ResourceLifecycleEvent
 
-from pyon.core.exception import FilesystemError, StreamingError, CorruptionError
 
 @attr('UNIT',group='event')
 class TestEvents(IonUnitTestCase):
@@ -441,12 +439,13 @@ class TestEventRepository(IonUnitTestCase):
                    'values': [110.0, 111.0]}]
 
         dsm = DatastoreManager()
-        ds = dsm.get_datastore("events", "EVENTS")
+        ds = dsm.get_datastore(DataStore.DS_EVENTS, DataStore.DS_PROFILE.EVENTS)
         ds.delete_datastore()
         ds.create_datastore()
 
         event_repo = EventRepository(dsm)
 
+        # Store one event without ID
         event1_dict = events[0].copy()
         event1_dict.pop("_id")
         event1_type = event1_dict.pop("type_")
@@ -458,6 +457,7 @@ class TestEventRepository(IonUnitTestCase):
         event1_read = events_r[0][2]
         self.assertEquals(event1_read.time_stamps, event1_dict["time_stamps"])
 
+        # Store one event with ID
         event2_dict = events[1].copy()
         event2_id = event2_dict.pop("_id")
         event2_type = event2_dict.pop("type_")
@@ -465,6 +465,7 @@ class TestEventRepository(IonUnitTestCase):
         event2_obj._id = event2_id
         event_repo.put_event(event2_obj)
 
+        # Store multiple events with ID, one existing, one non-existing
         event1_dict = events[0].copy()
         event1_id = event1_dict.pop("_id")
         event1_type = event1_dict.pop("type_")

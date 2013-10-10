@@ -104,7 +104,12 @@ class AbstractCouchDataStore(object):
         Delete the datastore with the given name.  This is
         equivalent to deleting a database from a database server.
         """
-        if not datastore_name.startswith(self.scope):
+        if datastore_name is None:
+            if self.datastore_name:
+                datastore_name = self._get_datastore_name(datastore_name)
+            else:
+                raise BadRequest("Not datastore_name provided")
+        elif not datastore_name.startswith(self.scope):
             datastore_name = self._get_datastore_name(datastore_name)
         log.info('Deleting datastore %s' % datastore_name)
 

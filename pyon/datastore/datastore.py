@@ -47,7 +47,7 @@ class DatastoreManager(object):
         validate_true(ds_name, 'ds_name must be provided')
         if (ds_name, profile) in self._datastores:
             log.debug("get_datastore(): Found instance of store '%s' (profile=%s)" % (ds_name, profile))
-            return self._datastores[ds_name]
+            return self._datastores[(ds_name, profile)]
 
         # Create a datastore instance
         log.info("get_datastore(): Create instance of store '%s' as database=%s (profile=%s)" % (ds_name, ds_name, profile))

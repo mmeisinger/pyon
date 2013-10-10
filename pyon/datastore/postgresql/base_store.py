@@ -218,14 +218,14 @@ class PostgresDataStore(DataStore):
             cur.execute("SELECT table_name FROM information_schema.tables where table_schema='public'")
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
-            print self.database, datastore_name, table_list
+            # print self.database, datastore_name, table_list
 
             table_del = 0
             for table in table_list:
                 if table.startswith(datastore_name):
                     statement = "DROP TABLE "+table+" CASCADE"
                     cur.execute(statement)
-                    print self.database, statement, cur.rowcount
+                    # print self.database, statement, cur.rowcount
                     table_del += abs(cur.rowcount)
 
         log.debug("Datastore '%s' deleted (%s tables)" % (datastore_name, table_del))
@@ -344,9 +344,11 @@ class PostgresDataStore(DataStore):
                 for i, doc in enumerate(docs):
                     object_id = object_ids[i] if object_ids else None
                     try:
+                        cur.execute("SAVEPOINT bulk_update")
                         oid, version = self._create_doc(cur, datastore_name, doc, object_id=object_id)
                     except IntegrityError:
                         log.warn("Doc exists, trying update id=%s", object_id)
+                        cur.execute("ROLLBACK TO SAVEPOINT bulk_update")
                         oid, version = self._update_doc(cur, datastore_name, doc)
                     result_list.append((True, oid, version))
             except DatabaseError:
@@ -571,7 +573,7 @@ class PostgresDataStore(DataStore):
     def delete_doc(self, doc, datastore_name=None, object_type=None, **kwargs):
         datastore_name = self._get_datastore_name(datastore_name)
         doc_id = doc if isinstance(doc, str) else doc["_id"]
-        #log.debug('delete_doc(): Delete document id=%s', doc_id)
+        log.debug('delete_doc(): Delete document id=%s object_type=%s', doc_id, object_type)
         if self.profile == DataStore.DS_PROFILE.DIRECTORY:
             datastore_name = datastore_name + "_dir"
         if object_type == "Association":
@@ -773,7 +775,7 @@ class PostgresDataStore(DataStore):
 
         extra_clause = filter.get("extra_clause", "")
         with self.pool.cursor() as cur:
-            print query + query_clause + order_clause + extra_clause, query_args
+            # print query + query_clause + order_clause + extra_clause, query_args
             cur.execute(query + query_clause + order_clause + extra_clause, query_args)
             rows = cur.fetchall()
 

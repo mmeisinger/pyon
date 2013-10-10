@@ -4,6 +4,8 @@
 
 __author__ = 'Michael Meisinger'
 
+from ooi.logging import log
+
 from pyon.core.exception import BadRequest
 from pyon.util.containers import get_safe, named_any, DotDict
 
@@ -18,10 +20,12 @@ class DataStore(object):
     DS_EVENTS = "events"
     DS_DIRECTORY = DS_RESOURCES
     DS_STATE = "state"
+    DS_CONVERSATIONS = "conversations"
 
     # Enumeration of index profiles for datastores
-    DS_PROFILE_LIST = ['OBJECTS', 'RESOURCES', 'DIRECTORY', 'STATE', 'EVENTS', 'FILESYSTEM', 'BASIC']
+    DS_PROFILE_LIST = ['OBJECTS', 'RESOURCES', 'DIRECTORY', 'STATE', 'EVENTS', 'CONV', 'FILESYSTEM', 'BASIC']
     DS_PROFILE = DotDict(zip(DS_PROFILE_LIST, DS_PROFILE_LIST))
+    DS_PROFILE.lock()
 
     # Maps common datastore logical names to index profiles
     DS_PROFILE_MAPPING = {
@@ -29,6 +33,7 @@ class DataStore(object):
         DS_OBJECTS: DS_PROFILE.OBJECTS,
         DS_EVENTS: DS_PROFILE.EVENTS,
         DS_STATE: DS_PROFILE.STATE,
+        DS_CONVERSATIONS: DS_PROFILE.OBJECTS,
         }
 
     def __init__(self, datastore_name=None, profile=None, config=None, container=None, scope=None, **kwargs):
@@ -78,7 +83,7 @@ class DatastoreFactory(object):
 
         # Step 3: Instantiate type specific implementation
         store_class = named_any(variant_store)
-        print "get_datastore(%s, profile=%s, scope=%s) -> %s" % (datastore_name, profile, scope, store_class.__name__)
+        log.debug("get_datastore(%s, profile=%s, scope=%s) -> %s", datastore_name, profile, scope, store_class.__name__)
         store = store_class(datastore_name=datastore_name, config=server_cfg, profile=profile, scope=scope)
 
         return store
