@@ -210,7 +210,7 @@ class PostgresDataStore(DataStore):
                 datastore_name = self._get_datastore_name(datastore_name)
             else:
                 raise BadRequest("Not datastore_name provided")
-        elif not datastore_name.startswith(self.scope):
+        elif not datastore_name.startswith(self.scope or ""):
             datastore_name = self._get_datastore_name(datastore_name)
         log.info('Deleting datastore %s' % datastore_name)
 
@@ -338,6 +338,7 @@ class PostgresDataStore(DataStore):
         log.debug('create_doc_mult(): create %s documents', len(docs))
 
         datastore_name = self._get_datastore_name(datastore_name)
+        # Could use cur.executemany() here but does not allow for case-by-case reaction to failure
         with self.pool.cursor() as cur:
             try:
                 result_list = []
@@ -406,6 +407,10 @@ class PostgresDataStore(DataStore):
                 raise NotFound('Object with id %s does not exist.' % doc_id)
 
     def update_doc(self, doc, datastore_name=None):
+        if '_id' not in doc:
+            raise BadRequest("Doc must have '_id'")
+        if '_rev' not in doc:
+            raise BadRequest("Doc must have '_rev'")
         datastore_name = self._get_datastore_name(datastore_name)
         #log.debug('update_doc(): Update document id=%s', doc['_id'])
 
@@ -419,11 +424,14 @@ class PostgresDataStore(DataStore):
             raise BadRequest("Invalid type for docs:%s" % type(docs))
         if not all(["_id" in doc for doc in docs]):
             raise BadRequest("Docs must have '_id'")
+        if not all(["_rev" in doc for doc in docs]):
+            raise BadRequest("Docs must have '_rev'")
         if not docs:
             return []
         log.debug('update_doc_mult(): update %s documents', len(docs))
 
         datastore_name = self._get_datastore_name(datastore_name)
+        # Could use cur.executemany() here but does not allow for case-by-case reaction to failure
         with self.pool.cursor() as cur:
             result_list = []
             for doc in docs:
@@ -450,8 +458,13 @@ class PostgresDataStore(DataStore):
 
         cur.execute("UPDATE "+table+" SET doc=%(doc)s, rev=%(revn)s" + xval + " WHERE id=%(id)s AND rev=%(rev)s",
                     statement_args)
-        # TODO: distinguish from docid not exist
         if not cur.rowcount:
+            # Distinguish rev conflict from documents does not exist.
+            #try:
+            #    self.read_doc(doc["_id"])
+            #    raise Conflict("Object with id %s revision conflict" % doc["_id"])
+            #except NotFound:
+            #    raise
             raise Conflict("Object with id %s revision conflict" % doc["_id"])
         return doc["_id"], doc["_rev"]
 
@@ -778,8 +791,6 @@ class PostgresDataStore(DataStore):
             # print query + query_clause + order_clause + extra_clause, query_args
             cur.execute(query + query_clause + order_clause + extra_clause, query_args)
             rows = cur.fetchall()
-
-
 
         if id_only:
             res_rows = [(self._prep_id(row[0]), [None, None, row[4]], None) for row in rows]

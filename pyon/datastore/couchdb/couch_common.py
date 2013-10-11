@@ -109,7 +109,7 @@ class AbstractCouchDataStore(object):
                 datastore_name = self._get_datastore_name(datastore_name)
             else:
                 raise BadRequest("Not datastore_name provided")
-        elif not datastore_name.startswith(self.scope):
+        elif not datastore_name.startswith(self.scope or ""):
             datastore_name = self._get_datastore_name(datastore_name)
         log.info('Deleting datastore %s' % datastore_name)
 

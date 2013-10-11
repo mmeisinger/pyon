@@ -108,7 +108,7 @@ class Test_DataStores(IonIntegrationTestCase):
             data_store.delete({"foo": "bar"})
 
         # Should see new data
-        self.assertTrue([1 for dsn in data_store.list_datastores() if dsn.endswith('ion_test_ds')])
+        self.assertTrue([1 for dsn in data_store.list_datastores() if dsn in ('ion_test_ds', '%s_%s' % (get_sys_name(), 'ion_test_ds'))])
 
         # Something should be returned
         self.assertTrue(data_store.info_datastore() is not None)
@@ -253,7 +253,20 @@ class Test_DataStores(IonIntegrationTestCase):
         with self.assertRaises(Conflict):
             data_store.update(data_set_read_obj2)
 
-            # List all the revisions of Dataset in data store, should be two
+        # Test update with non-existing object
+        spurious_obj = IonObject('Dataset')
+        with self.assertRaises(BadRequest):
+            data_store.update(spurious_obj)
+
+        spurious_obj._rev = data_set_read_obj._rev
+        with self.assertRaises(BadRequest):
+            data_store.update(spurious_obj)
+
+        #spurious_obj._id = "NON EXISTING ID"
+        #with self.assertRaises(NotFound):
+        #    data_store.update(spurious_obj)
+
+        # List all the revisions of Dataset in data store, should be two
 #        res = data_store.list_object_revisions(data_set_uuid)
 #        self.assertTrue(len(res) == 2)
 
@@ -312,7 +325,7 @@ class Test_DataStores(IonIntegrationTestCase):
         data_store.delete_datastore()
 
         # Assert data store is now gone
-        self.assertFalse([1 for dsn in data_store.list_datastores() if dsn.endswith('ion_test_ds')])
+        self.assertFalse([1 for dsn in data_store.list_datastores() if dsn in ('ion_test_ds', '%s_%s' % (get_sys_name(), 'ion_test_ds'))])
 
     def test_datastore_attach(self):
         data_store = self.ds_class(datastore_name='ion_test_ds', profile=DataStore.DS_PROFILE.RESOURCES, scope=get_sys_name())
