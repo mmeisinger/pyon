@@ -4,27 +4,13 @@
 
 __author__ = 'Michael Meisinger'
 
-
-import os.path
-from uuid import uuid4
-import simplejson as json
-
-try:
-    import psycopg2
-    from psycopg2 import OperationalError
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-except ImportError:
-    print "PostgreSQL driver not available!"
-
 from pyon.core.bootstrap import get_obj_registry, CFG
 from pyon.core.exception import BadRequest, Conflict, NotFound, Inconsistent
 from pyon.core.object import IonObjectBase, IonObjectSerializer, IonObjectDeserializer
 from pyon.datastore.postgresql.base_store import PostgresDataStore
 from pyon.datastore.datastore import DataStore
-from pyon.util.containers import get_safe, DictDiffer
 from pyon.util.log import log
 from pyon.ion.resource import CommonResourceLifeCycleSM, OT, RT
-from pyon.util.arg_check import validate_is_instance
 
 
 class PostgresPyonDataStore(PostgresDataStore):
@@ -125,33 +111,53 @@ class PostgresPyonDataStore(PostgresDataStore):
         """
         Returns a list of associations for a given list of subjects
         """
-        ds, datastore_name = self._get_datastore()
-        validate_is_instance(subjects, list, 'subjects is not a list of resource_ids')
-        view_args = dict(keys=subjects, include_docs=True)
-        results = self.query_view(self._get_view_name("association", "by_bulk"), view_args)
-        ids = [i['value'] for i in results]
-        assocs = [i['doc'] for i in results]
-        self._count(find_assocs_mult_call=1, find_assocs_mult_obj=len(ids))
-        if id_only:
-            return ids, assocs
-        else:
-            return self.read_mult(ids), assocs
+        #ds, datastore_name = self._get_datastore()
+        #validate_is_instance(subjects, list, 'subjects is not a list of resource_ids')
+        #view_args = dict(keys=subjects, include_docs=True)
+        #results = self.query_view(self._get_view_name("association", "by_bulk"), view_args)
+        #ids = [i['value'] for i in results]
+        #assocs = [i['doc'] for i in results]
+        #self._count(find_assocs_mult_call=1, find_assocs_mult_obj=len(ids))
+        #if id_only:
+        #    return ids, assocs
+        #else:
+        #    return self.read_mult(ids), assocs
+
+        # TODO: Port this implementation to Postgres single query
+        res_list = [[], []]
+        if not subjects:
+            return res_list
+        for sub in subjects:
+            res_ids, res_assocs = self.find_objects(subject=sub, id_only=id_only)
+            res_list[0].extend(res_ids)
+            res_list[1].extend(res_assocs)
+        return res_list
 
     def find_subjects_mult(self, objects, id_only=False):
         """
         Returns a list of associations for a given list of objects
         """
-        ds, datastore_name = self._get_datastore()
-        validate_is_instance(objects, list, 'objects is not a list of resource_ids')
-        view_args = dict(keys=objects, include_docs=True)
-        results = self.query_view(self._get_view_name("association", "by_subject_bulk"), view_args)
-        ids = [i['value'] for i in results]
-        assocs = [i['doc'] for i in results]
-        self._count(find_assocs_mult_call=1, find_assocs_mult_obj=len(ids))
-        if id_only:
-            return ids, assocs
-        else:
-            return self.read_mult(ids), assocs
+        #ds, datastore_name = self._get_datastore()
+        #validate_is_instance(objects, list, 'objects is not a list of resource_ids')
+        #view_args = dict(keys=objects, include_docs=True)
+        #results = self.query_view(self._get_view_name("association", "by_subject_bulk"), view_args)
+        #ids = [i['value'] for i in results]
+        #assocs = [i['doc'] for i in results]
+        #self._count(find_assocs_mult_call=1, find_assocs_mult_obj=len(ids))
+        #if id_only:
+        #    return ids, assocs
+        #else:
+        #    return self.read_mult(ids), assocs
+
+        # TODO: Port this implementation to Postgres single query
+        res_list = [[], []]
+        if not objects:
+            return res_list
+        for obj in objects:
+            res_ids, res_assocs = self.find_subjects(obj=obj, id_only=id_only)
+            res_list[0].extend(res_ids)
+            res_list[1].extend(res_assocs)
+        return res_list
 
     def find_objects(self, subject, predicate=None, object_type=None, id_only=False, **kwargs):
         log.debug("find_objects(subject=%s, predicate=%s, object_type=%s, id_only=%s", subject, predicate, object_type, id_only)
@@ -187,7 +193,10 @@ class PostgresPyonDataStore(PostgresDataStore):
                 query_clause += " AND ot=%(ot)s"
 
         extra_clause = view_args.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         obj_assocs = [self._persistence_dict_to_ion_object(row[-1]) for row in rows]
         log.debug("find_objects() found %s objects", len(obj_assocs))
@@ -232,7 +241,10 @@ class PostgresPyonDataStore(PostgresDataStore):
                 query_clause += " AND st=%(st)s"
 
         extra_clause = view_args.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         obj_assocs = [self._persistence_dict_to_ion_object(row[-1]) for row in rows]
         log.debug("find_subjects() found %s subjects", len(obj_assocs))
@@ -341,7 +353,10 @@ class PostgresPyonDataStore(PostgresDataStore):
         extra_clause = view_args.get("extra_clause", "")
         sql = query + query_clause + extra_clause
         #print "find_associations(): SQL=", sql, query_args
-        rows = self.pool.fetchall(sql, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(sql, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         if id_only:
             assocs = [self._prep_id(row[0]) for row in rows]
@@ -411,7 +426,10 @@ class PostgresPyonDataStore(PostgresDataStore):
             query_clause = ""
 
         extra_clause = filter.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         res_assocs = [dict(id=self._prep_id(row[0]), name=row[1], type=row[2]) for row in rows]
         log.debug("find_res_by_type() found %s objects", len(res_assocs))
@@ -443,7 +461,10 @@ class PostgresPyonDataStore(PostgresDataStore):
             query_clause += " AND type_=%(type_)s"
 
         extra_clause = filter.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         res_assocs = [dict(id=self._prep_id(row[0]), name=row[1], type=row[2], lcstate=row[3] if is_maturity else row[4]) for row in rows]
         log.debug("find_res_by_lcstate() found %s objects", len(res_assocs))
@@ -467,7 +488,10 @@ class PostgresPyonDataStore(PostgresDataStore):
             query_clause += " AND type_=%(type_)s"
 
         extra_clause = filter.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         res_assocs = [dict(id=self._prep_id(row[0]), name=row[1], type=row[2]) for row in rows]
         log.debug("find_res_by_name() found %s objects", len(res_assocs))
@@ -494,7 +518,10 @@ class PostgresPyonDataStore(PostgresDataStore):
             query_clause += " AND type_=%(type_)s"
 
         extra_clause = filter.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         res_assocs = [dict(id=self._prep_id(row[0]), type=row[1], keyword=keyword) for row in rows]
         log.debug("find_res_by_keyword() found %s objects", len(res_assocs))
@@ -520,7 +547,10 @@ class PostgresPyonDataStore(PostgresDataStore):
             query_clause += " AND type_=%(type_)s"
 
         extra_clause = filter.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         res_assocs = [dict(id=self._prep_id(row[0]), type=row[1], nested_type=nested_type) for row in rows]
         log.debug("find_res_by_nested_type() found %s objects", len(res_assocs))
@@ -551,7 +581,10 @@ class PostgresPyonDataStore(PostgresDataStore):
             query_clause += " AND type_=%(type_)s"
 
         extra_clause = filter.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         res_assocs = [dict(id=self._prep_id(row[0]), type=row[1], attr_name=attr_name, attr_value=attr_value) for row in rows]
         log.debug("find_res_by_attribute() found %s objects", len(res_assocs))
@@ -584,7 +617,10 @@ class PostgresPyonDataStore(PostgresDataStore):
             query_clause += " AND x[1]=%(ans)s AND x[2]=%(aid)s"
 
         extra_clause = filter.get("extra_clause", "")
-        rows = self.pool.fetchall(query + query_clause + extra_clause, query_args)
+        with self.pool.cursor() as cur:
+            cur.execute(query + query_clause + extra_clause, query_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         res_assocs = [dict(id=self._prep_id(row[0]), alt_id_ns=row[1], alt_id=row[2]) for row in rows]
         log.debug("find_res_by_alternative_id() found %s objects", len(res_assocs))

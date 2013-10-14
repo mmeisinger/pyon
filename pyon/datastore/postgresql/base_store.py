@@ -5,6 +5,7 @@
 __author__ = 'Michael Meisinger'
 
 import contextlib
+import inspect
 import os.path
 from uuid import uuid4
 import simplejson as json
@@ -22,6 +23,7 @@ except ImportError:
 
 from pyon.core.exception import BadRequest, Conflict, NotFound, Inconsistent
 from pyon.datastore.datastore_common import DataStore
+from pyon.util.containers import get_ion_ts
 
 from ooi.logging import log
 
@@ -73,6 +75,7 @@ class PostgresDataStore(DataStore):
         self.datastore_name = datastore_name
 
         self._datastore_cache = {}
+        self._statement_log = []
 
         # Database (Postgres database) and datastore (database table) handling. Scope with
         # given scope (e.g. sysname) and make all lowercase for couch compatibility
@@ -110,6 +113,7 @@ class PostgresDataStore(DataStore):
         cur = conn.cursor()
         try:
             cur.execute("CREATE DATABASE %s" % database_name)
+            self._log_statement(cursor=cur)
             conn.commit()
         finally:
             cur.close()
@@ -124,6 +128,7 @@ class PostgresDataStore(DataStore):
                 db_init = f.read()
             if db_init:
                 cur.execute(db_init)
+                self._log_statement(statement="EXECUTE db_init.sql")
             conn2.commit()
         finally:
             cur.close()
@@ -192,6 +197,7 @@ class PostgresDataStore(DataStore):
         with self.pool.cursor() as cur:
             try:
                 cur.execute(profile_sql % dict(ds=ds_name))
+                self._log_statement(statement="EXECUTE profile_%s.sql" % profile)
             except ProgrammingError:
                 raise BadRequest("Datastore with name %s already exists" % datastore_name)
             except DatabaseError as de:
@@ -216,6 +222,7 @@ class PostgresDataStore(DataStore):
 
         with self.pool.cursor() as cur:
             cur.execute("SELECT table_name FROM information_schema.tables where table_schema='public'")
+            log_entry = self._log_statement(cursor=cur)
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
             # print self.database, datastore_name, table_list
@@ -239,6 +246,7 @@ class PostgresDataStore(DataStore):
 
         with self.pool.cursor() as cur:
             cur.execute("SELECT table_name FROM information_schema.tables where table_schema='public'")
+            self._log_statement(cursor=cur)
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
 
@@ -246,6 +254,7 @@ class PostgresDataStore(DataStore):
             for table in table_list:
                 if table.startswith(datastore_name):
                     cur.execute("TRUNCATE TABLE "+table+" CASCADE")
+                    self._log_statement(cursor=cur)
                     table_del += abs(cur.rowcount)
 
         log.debug("Datastore '%s' truncated (%s tables)" % (datastore_name, table_del))
@@ -256,6 +265,7 @@ class PostgresDataStore(DataStore):
     def list_datastores(self):
         with self.pool.cursor() as cur:
             cur.execute("SELECT table_name FROM information_schema.tables where table_schema='public'")
+            self._log_statement(cursor=cur)
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
 
@@ -282,6 +292,7 @@ class PostgresDataStore(DataStore):
         datastore_name = self._get_datastore_name(datastore_name)
         with self.pool.cursor() as cur:
             cur.execute("SELECT exists(select * from information_schema.tables where table_name=%s)", (datastore_name,))
+            self._log_statement(cursor=cur)
             exists = cur.fetchone()[0]
             log.info("Datastore '%s' exists: %s", datastore_name, exists)
 
@@ -297,6 +308,7 @@ class PostgresDataStore(DataStore):
         datastore_name = self._get_datastore_name(datastore_name)
         with self.pool.cursor() as cur:
             cur.execute("SELECT id FROM "+datastore_name)
+            self._log_statement(cursor=cur)
             id_list = cur.fetchall()
             id_list = [e[0] for e in id_list]
 
@@ -380,6 +392,7 @@ class PostgresDataStore(DataStore):
 
         statement = "INSERT INTO " + table + " (id, rev, doc" + xcol + ") VALUES (%(id)s, 1, %(doc)s" + xval + ")"
         cur.execute(statement, statement_args)
+        self._log_statement(cursor=cur)
         return doc["_id"], "1"
 
     def create_attachment(self, doc, attachment_name, data, content_type=None, datastore_name=""):
@@ -403,6 +416,7 @@ class PostgresDataStore(DataStore):
                         "VALUES (%(docid)s, 1, %(doc)s, %(name)s, %(content_type)s)"
             try:
                 cur.execute(statement, statement_args)
+                self._log_statement(cursor=cur)
             except IntegrityError:
                 raise NotFound('Object with id %s does not exist.' % doc_id)
 
@@ -458,6 +472,7 @@ class PostgresDataStore(DataStore):
 
         cur.execute("UPDATE "+table+" SET doc=%(doc)s, rev=%(revn)s" + xval + " WHERE id=%(id)s AND rev=%(rev)s",
                     statement_args)
+        self._log_statement(cursor=cur)
         if not cur.rowcount:
             # Distinguish rev conflict from documents does not exist.
             #try:
@@ -506,6 +521,7 @@ class PostgresDataStore(DataStore):
                         "rev=rev+1, doc=%(doc)s,  content_type=%(content_type)s "+ \
                         "WHERE docid=%(docid)s AND name=%(name)s"
             cur.execute(statement, statement_args)
+            self._log_statement(cursor=cur)
             if not cur.rowcount:
                 raise NotFound('Attachment %s for object with id %s does not exist.' % (attachment_name, doc_id))
 
@@ -519,6 +535,7 @@ class PostgresDataStore(DataStore):
 
         with self.pool.cursor() as cur:
             cur.execute("SELECT doc FROM "+datastore_name+" WHERE id=%s", (doc_id,))
+            self._log_statement(cursor=cur)
             doc_list = cur.fetchall()
             if not doc_list:
                 raise NotFound('Object with id %s does not exist.' % doc_id)
@@ -536,6 +553,7 @@ class PostgresDataStore(DataStore):
 
         with self.pool.cursor() as cur:
             cur.execute("SELECT rev FROM "+datastore_name+" WHERE id=%s", (doc_id,))
+            self._log_statement(cursor=cur)
             doc_list = cur.fetchall()
             if not doc_list:
                 raise NotFound('Object with id %s does not exist.' % doc_id)
@@ -566,7 +584,11 @@ class PostgresDataStore(DataStore):
         doc_id = doc if isinstance(doc, str) else doc['_id']
         statement_args = dict(docid=doc_id, name=attachment_name)
 
-        row = self.pool.fetchone("SELECT doc FROM "+table+" WHERE docid=%(docid)s AND name=%(name)s", statement_args)
+        with self.pool.cursor() as cur:
+            cur.execute("SELECT doc FROM "+table+" WHERE docid=%(docid)s AND name=%(name)s", statement_args)
+            row = cur.fetchone()
+            self._log_statement(cursor=cur, result=row)
+
         if not row:
             raise NotFound('Attachment %s does not exist in document %s.%s.',
                            attachment_name, datastore_name, doc_id)
@@ -579,7 +601,10 @@ class PostgresDataStore(DataStore):
 
         doc_id = doc if isinstance(doc, str) else doc['_id']
         statement_args = dict(docid=doc_id)
-        rows = self.pool.fetchall("SELECT name, content_type FROM "+table+" WHERE docid=%(docid)s", statement_args)
+        with self.pool.cursor() as cur:
+            cur.execute("SELECT name, content_type FROM "+table+" WHERE docid=%(docid)s", statement_args)
+            rows = cur.fetchall()
+            self._log_statement(cursor=cur, result=rows)
 
         return [dict(name=row[0], content_type=row[1]) for row in rows]
 
@@ -616,6 +641,7 @@ class PostgresDataStore(DataStore):
     def _delete_doc(self, cur, table, doc_id):
         sql = "DELETE FROM "+table+" WHERE id=%s"
         cur.execute(sql, (doc_id, ))
+        self._log_statement(cursor=cur)
         if not cur.rowcount:
             raise NotFound('Object with id %s does not exist.' % doc_id)
 
@@ -632,6 +658,7 @@ class PostgresDataStore(DataStore):
         statement_args = dict(docid=doc_id, name=attachment_name)
         with self.pool.cursor() as cur:
             cur.execute("DELETE FROM "+table+" WHERE docid=%(docid)s AND name=%(name)s", statement_args)
+            self._log_statement(cursor=cur)
             if not cur.rowcount:
                 raise NotFound('Attachment %s does not exist in document %s.%s.',
                                attachment_name, datastore_name, doc_id)
@@ -722,6 +749,7 @@ class PostgresDataStore(DataStore):
         with self.pool.cursor() as cur:
             #print query + query_clause + extra_clause, query_args
             cur.execute(query + query_clause + extra_clause, query_args)
+            self._log_statement(cursor=cur)
             rows = cur.fetchall()
 
         #if view_name == "by_attribute":
@@ -754,6 +782,7 @@ class PostgresDataStore(DataStore):
         extra_clause = filter.get("extra_clause", "")
         with self.pool.cursor() as cur:
             cur.execute(query + query_clause + extra_clause, query_args)
+            self._log_statement(cursor=cur)
             rows = cur.fetchall()
 
         if id_only:
@@ -790,6 +819,7 @@ class PostgresDataStore(DataStore):
         with self.pool.cursor() as cur:
             # print query + query_clause + order_clause + extra_clause, query_args
             cur.execute(query + query_clause + order_clause + extra_clause, query_args)
+            self._log_statement(cursor=cur)
             rows = cur.fetchall()
 
         if id_only:
@@ -871,6 +901,7 @@ class PostgresDataStore(DataStore):
             #print "QUERY:", sql, query_args
             #print "filter:", filter
             cur.execute(sql, query_args)
+            self._log_statement(cursor=cur)
             rows = cur.fetchall()
 
         if id_only:
@@ -894,6 +925,40 @@ class PostgresDataStore(DataStore):
         doc = internal_doc
         return doc
 
+    def _log_statement(self, context=None, statement=None, cursor=None, result=None, **kwargs):
+        if not context:
+            stack = inspect.stack()
+            frame_num = 1
+            context = ""
+            while len(stack) > frame_num and frame_num < 6:
+                context = "%s:%s:%s\n" % (stack[frame_num][1], stack[frame_num][2], stack[frame_num][3]) + context
+                frame_num += 1
+        rowcount = 0
+        if cursor:
+            statement = cursor.query
+            rowcount = cursor.rowcount
+        log_entry = dict(
+            seq=0 if not self._statement_log else self._statement_log[0]['seq'] + 1,
+            ts=get_ion_ts(),
+            context=context,
+            statement=statement,
+            rowcount=rowcount
+            #kwargs=kwargs
+        )
+        self._statement_log.insert(0, log_entry)
+        if len(self._statement_log) > 2100:
+            self._statement_log = self._statement_log[:2000]
+        return log_entry
+
+    def _log_query_results(self, log_entry, results):
+        log_entry["statement_type"] = "query"
+        log_entry["numrows"] = len(results)
+
+    def _print_statement_log(self, max_log=10000):
+        for i, log_entry in enumerate(self._statement_log[:max_log]):
+            print "SQL %s @%s -> %s" % (log_entry['seq'], log_entry['ts'], log_entry['rowcount'])
+            print log_entry['statement']
+            print log_entry['context']
 
 class DatabaseConnectionPool(object):
 
