@@ -4,15 +4,10 @@
 
 __author__ = 'Michael Meisinger'
 
-import contextlib
 import inspect
 import os.path
 from uuid import uuid4
 import simplejson as json
-import gevent
-from gevent.queue import Queue
-from gevent.socket import wait_read, wait_write
-import sys
 
 try:
     import psycopg2
@@ -23,28 +18,13 @@ except ImportError:
 
 from pyon.core.exception import BadRequest, Conflict, NotFound, Inconsistent
 from pyon.datastore.datastore_common import DataStore
+from pyon.datastore.postgresql.pg_util import PostgresConnectionPool
+
 from pyon.util.containers import get_ion_ts
 
 from ooi.logging import log
 
-
-# Gevent Monkey patching
-def gevent_wait_callback(conn, timeout=None):
-    """A wait callback useful to allow gevent to work with Psycopg."""
-    while 1:
-        state = conn.poll()
-        if state == extensions.POLL_OK:
-            break
-        elif state == extensions.POLL_READ:
-            wait_read(conn.fileno(), timeout=timeout)
-        elif state == extensions.POLL_WRITE:
-            wait_write(conn.fileno(), timeout=timeout)
-        else:
-            raise OperationalError(
-                "Bad result from poll: %r" % state)
-
-extensions.set_wait_callback(gevent_wait_callback)
-# End Gevent Monkey patching
+MAX_STATEMENT_LOG = 2000
 
 
 class PostgresDataStore(DataStore):
@@ -221,7 +201,7 @@ class PostgresDataStore(DataStore):
         log.info('Deleting datastore %s' % datastore_name)
 
         with self.pool.cursor() as cur:
-            cur.execute("SELECT table_name FROM information_schema.tables where table_schema='public'")
+            cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
             log_entry = self._log_statement(cursor=cur)
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
@@ -245,7 +225,7 @@ class PostgresDataStore(DataStore):
         log.info('Clearing datastore %s' % datastore_name)
 
         with self.pool.cursor() as cur:
-            cur.execute("SELECT table_name FROM information_schema.tables where table_schema='public'")
+            cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
             self._log_statement(cursor=cur)
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
@@ -264,7 +244,7 @@ class PostgresDataStore(DataStore):
 
     def list_datastores(self):
         with self.pool.cursor() as cur:
-            cur.execute("SELECT table_name FROM information_schema.tables where table_schema='public'")
+            cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
             self._log_statement(cursor=cur)
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
@@ -291,7 +271,7 @@ class PostgresDataStore(DataStore):
     def datastore_exists(self, datastore_name=None):
         datastore_name = self._get_datastore_name(datastore_name)
         with self.pool.cursor() as cur:
-            cur.execute("SELECT exists(select * from information_schema.tables where table_name=%s)", (datastore_name,))
+            cur.execute("SELECT exists(SELECT * FROM information_schema.tables WHERE table_name=%s)", (datastore_name,))
             self._log_statement(cursor=cur)
             exists = cur.fetchone()[0]
             log.info("Datastore '%s' exists: %s", datastore_name, exists)
@@ -567,14 +547,36 @@ class PostgresDataStore(DataStore):
         if rev != doc["_rev"]:
             raise Conflict("Object with id %s revision conflict is=%s, need=%s" % (doc["_id"], rev, doc["_rev"]))
 
-    def read_doc_mult(self, object_ids, datastore_name=None):
+    def read_doc_mult(self, object_ids, datastore_name=None, object_type=None):
         """"
         Fetch a number of raw doc instances, HEAD rev.
         """
-        # TODO: SELECT * FROM table WHERE id IN (...)
         if not object_ids:
             return []
-        doc_list = [self.read_doc(oid, datastore_name=datastore_name) for oid in object_ids]
+        datastore_name = self._get_datastore_name(datastore_name)
+
+        if object_type == "Association":
+            datastore_name = datastore_name + "_assoc"
+        elif object_type == "DirEntry":
+            datastore_name = datastore_name + "_dir"
+
+        query = "SELECT id, doc FROM "+datastore_name+" WHERE id IN ("
+        query_args = dict()
+        for i, oid in enumerate(object_ids):
+            arg_name = "id" + str(i)
+            if i>0:
+                query += ","
+            query += "%(" + arg_name + ")s"
+            query_args[arg_name] = oid
+        query += ")"
+
+        with self.pool.cursor() as cur:
+            cur.execute(query, query_args)
+            self._log_statement(cursor=cur)
+            rows = cur.fetchall()
+
+        doc_by_id = {row[0]: row[1] for row in rows}
+        doc_list = [doc_by_id.get(oid, None) for oid in object_ids]
         return doc_list
 
     def read_attachment(self, doc, attachment_name, datastore_name=""):
@@ -946,8 +948,8 @@ class PostgresDataStore(DataStore):
             #kwargs=kwargs
         )
         self._statement_log.insert(0, log_entry)
-        if len(self._statement_log) > 2100:
-            self._statement_log = self._statement_log[:2000]
+        if len(self._statement_log) > MAX_STATEMENT_LOG + 100:
+            self._statement_log = self._statement_log[:MAX_STATEMENT_LOG]
         return log_entry
 
     def _log_query_results(self, log_entry, results):
@@ -960,136 +962,3 @@ class PostgresDataStore(DataStore):
             print log_entry['statement']
             print log_entry['context']
 
-class DatabaseConnectionPool(object):
-
-    def __init__(self, maxsize=100):
-        if not isinstance(maxsize, (int, long)):
-            raise TypeError('Expected integer, got %r' % (maxsize, ))
-        self.maxsize = maxsize
-        self.pool = Queue()
-        self.size = 0
-
-    def get(self):
-        pool = self.pool
-        if self.size >= self.maxsize or pool.qsize():
-            return pool.get()
-        else:
-            self.size += 1
-            try:
-                new_item = self.create_connection()
-            except:
-                self.size -= 1
-                raise
-            return new_item
-
-    def put(self, item):
-        self.pool.put(item)
-
-    def closeall(self):
-        while not self.pool.empty():
-            conn = self.pool.get_nowait()
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    @contextlib.contextmanager
-    def connection(self, isolation_level=None):
-        conn = self.get()
-        try:
-            if isolation_level is not None:
-                if conn.isolation_level == isolation_level:
-                    isolation_level = None
-                else:
-                    conn.set_isolation_level(isolation_level)
-            yield conn
-        except:
-            if conn.closed:
-                conn = None
-                self.closeall()
-            else:
-                conn = self._rollback(conn)
-            raise
-        else:
-            if conn.closed:
-                raise OperationalError("Cannot commit because connection was closed: %r" % (conn, ))
-            conn.commit()
-        finally:
-            if conn is not None and not conn.closed:
-                if isolation_level is not None:
-                    conn.set_isolation_level(isolation_level)
-                self.put(conn)
-
-    @contextlib.contextmanager
-    def cursor(self, *args, **kwargs):
-        isolation_level = kwargs.pop('isolation_level', None)
-        conn = self.get()
-        try:
-            if isolation_level is not None:
-                if conn.isolation_level == isolation_level:
-                    isolation_level = None
-                else:
-                    conn.set_isolation_level(isolation_level)
-            yield conn.cursor(*args, **kwargs)
-        except:
-            if conn.closed:
-                conn = None
-                self.closeall()
-            else:
-                conn = self._rollback(conn)
-            raise
-        else:
-            if conn.closed:
-                raise OperationalError("Cannot commit because connection was closed: %r" % (conn, ))
-            conn.commit()
-        finally:
-            if conn is not None and not conn.closed:
-                if isolation_level is not None:
-                    conn.set_isolation_level(isolation_level)
-                self.put(conn)
-
-    def _rollback(self, conn):
-        try:
-            conn.rollback()
-        except:
-            gevent.get_hub().handle_error(conn, *sys.exc_info())
-            return
-        return conn
-
-    def execute(self, *args, **kwargs):
-        with self.cursor(**kwargs) as cursor:
-            cursor.execute(*args)
-            return cursor.rowcount
-
-    def fetchone(self, *args, **kwargs):
-        with self.cursor(**kwargs) as cursor:
-            cursor.execute(*args)
-            return cursor.fetchone()
-
-    def fetchall(self, *args, **kwargs):
-        with self.cursor(**kwargs) as cursor:
-            cursor.execute(*args)
-            return cursor.fetchall()
-
-    def fetchiter(self, *args, **kwargs):
-        with self.cursor(**kwargs) as cursor:
-            cursor.execute(*args)
-            while True:
-                items = cursor.fetchmany()
-                if not items:
-                    break
-                for item in items:
-                    yield item
-
-
-class PostgresConnectionPool(DatabaseConnectionPool):
-
-    def __init__(self, *args, **kwargs):
-        self.connect = kwargs.pop('connect', psycopg2.connect)
-        maxsize = kwargs.pop('maxsize', None)
-        self.args = args
-        self.kwargs = kwargs
-        DatabaseConnectionPool.__init__(self, maxsize)
-
-    def create_connection(self):
-        return self.connect(*self.args, **self.kwargs)
