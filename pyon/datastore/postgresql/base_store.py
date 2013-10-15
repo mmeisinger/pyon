@@ -20,11 +20,11 @@ from pyon.core.exception import BadRequest, Conflict, NotFound, Inconsistent
 from pyon.datastore.datastore_common import DataStore
 from pyon.datastore.postgresql.pg_util import PostgresConnectionPool
 
-from pyon.util.containers import get_ion_ts
+from pyon.util.containers import get_ion_ts, get_datetime_str
 
 from ooi.logging import log
 
-MAX_STATEMENT_LOG = 2000
+MAX_STATEMENT_LOG = 5000
 
 
 class PostgresDataStore(DataStore):
@@ -931,9 +931,12 @@ class PostgresDataStore(DataStore):
         if not context:
             stack = inspect.stack()
             frame_num = 1
-            context = ""
-            while len(stack) > frame_num and frame_num < 6:
-                context = "%s:%s:%s\n" % (stack[frame_num][1], stack[frame_num][2], stack[frame_num][3]) + context
+            context = []
+            while len(stack) > frame_num and frame_num < 15:
+                exec_line = "%s:%s:%s" % (stack[frame_num][1], stack[frame_num][2], stack[frame_num][3])
+                context.insert(0, exec_line)
+                if exec_line.endswith("_control_flow") or exec_line.endswith("load_ion") or exec_line.endswith("spawn_process"):
+                    break
                 frame_num += 1
         rowcount = 0
         if cursor:
@@ -956,9 +959,8 @@ class PostgresDataStore(DataStore):
         log_entry["statement_type"] = "query"
         log_entry["numrows"] = len(results)
 
-    def _print_statement_log(self, max_log=10000):
-        for i, log_entry in enumerate(self._statement_log[:max_log]):
-            print "SQL %s @%s -> %s" % (log_entry['seq'], log_entry['ts'], log_entry['rowcount'])
+    def _print_statement_log(self, max_log=10000, reverse=True):
+        for i, log_entry in enumerate(self._statement_log[:max_log] if reverse else reversed(self._statement_log[-max_log:])):
+            print "\nSQL %s @%s (%s) -> %s" % (log_entry['seq'], log_entry['ts'], get_datetime_str(log_entry['ts'], show_millis=True), log_entry['rowcount'])
             print log_entry['statement']
-            print log_entry['context']
-
+            print " " + "\n ".join(log_entry['context'])
