@@ -9,11 +9,13 @@ import gevent
 from gevent.queue import Queue
 from gevent.socket import wait_read, wait_write
 import sys
+import simplejson as json
 
 try:
     import psycopg2
     from psycopg2 import OperationalError, ProgrammingError, DatabaseError, IntegrityError, extensions
     from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+    from psycopg2.extras import register_default_json
 except ImportError:
     print "PostgreSQL driver not available!"
 
@@ -35,6 +37,9 @@ def gevent_wait_callback(conn, timeout=None):
 
 extensions.set_wait_callback(gevent_wait_callback)
 # End Gevent Monkey patching
+
+# Set JSON to Pyon default simplejson to get str instead of unicode in deserialization
+register_default_json(None, globally=True, loads=json.loads)
 
 
 class DatabaseConnectionPool(object):
