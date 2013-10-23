@@ -1,23 +1,29 @@
-This directory contains a fully functional PostgreSQL datastore implementation for ION.
+This directory contains a fully functional PostgreSQL datastore implementation for the OOI Network.
 
 REQUIREMENTS
-- postgresql 9.2.x or higher
+- PostgreSQL 9.2.x or higher
 - psycopg2 Python client
 
 ISSUES:
-- resource finds exclude resources in RETIRED state
+- Replace string concatenation when constructing statements
+- resource finds need to exclude resources in RETIRED state
 - support descending order for all finds
-- query_view implementation (seems to be unused)
 - create_mult is (ab)used for both create and update in one call by preload!
 - list_datastore lists all tables, not just "datastores"
-- tables are escaped by scope as well (unnecessary)
+- tables are escaped by sysname scope as well (unnecessary)
 - view on json_altids does not work
+- drop database timeout does not raise exception
 
 QUESTIONS:
 - FILESYSTEM datastore used by preservation MS or not?
-- Check unicode result JSON read
-- priviledged user to create the database?
+- Need to use priviledged user to create the database?
 - EXPLAIN ANALYZE queries
+- check query_view implementation (seems to be unused)
+- Use postgres 9.3 json operators
+- Rewrite some of the json functions
 
 FUTURE FEATURES:
 - history support by copying into separate history table
+- specific views for resource types and associations
+- Wrap cursor in factory to be able to instrument it (better than explicit log_statement)
+- Consider SQLAlchemy

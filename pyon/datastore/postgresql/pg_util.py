@@ -175,3 +175,23 @@ class PostgresConnectionPool(DatabaseConnectionPool):
 
     def create_connection(self):
         return self.connect(*self.args, **self.kwargs)
+
+
+class StatementBuilder(object):
+    def __init__(self):
+        self.statement = None
+        self.st_frag = []
+        self.statement_args = {}
+
+    def append(self, *fragments):
+        self.st_frag.extend(fragments)
+
+    def append_value(self, fragment, valkey, value, count):
+        if count:
+            self.st_frag.append(",")
+        self.st_frag.append(fragment)
+        self.statement_args[valkey+str(count)] = value
+
+    def build(self):
+        self.statement = "".join(self.st_frag)
+        return self.statement, self.statement_args

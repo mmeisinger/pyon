@@ -18,7 +18,7 @@ except ImportError:
 
 from pyon.core.exception import BadRequest, Conflict, NotFound, Inconsistent
 from pyon.datastore.datastore_common import DataStore
-from pyon.datastore.postgresql.pg_util import PostgresConnectionPool
+from pyon.datastore.postgresql.pg_util import PostgresConnectionPool, StatementBuilder
 
 from pyon.util.containers import get_ion_ts, get_datetime_str
 
@@ -330,15 +330,14 @@ class PostgresDataStore(DataStore):
         log.debug('create_doc_mult(): create %s documents', len(docs))
 
         datastore_name = self._get_datastore_name(datastore_name)
+        sb = StatementBuilder()
 
         # Take the first document to determine the type of objects (resource, association, dir entry)
         extra_cols, table = self._get_extra_cols(docs[0], datastore_name, self.profile)
         xcol = ""
-        if extra_cols:
-            for col in extra_cols:
-                xcol += ", %s" % col
-        statement = "INSERT INTO "+table+" (id, rev, doc" + xcol + ") VALUES "
-        statement_args = dict()
+        for col in extra_cols:
+            xcol += ", %s" % col
+        sb.append("INSERT INTO "+table+" (id, rev, doc" + xcol + ") VALUES ")
 
         # Build a large statement
         for i, doc in enumerate(docs):
@@ -351,19 +350,19 @@ class PostgresDataStore(DataStore):
             doc_json = json.dumps(doc)
 
             if i>0:
-                statement += ","
+                sb.append(",")
 
-            statement_args["id"+str(i)] = doc["_id"]
-            statement_args["doc"+str(i)] = doc_json
+            sb.statement_args["id"+str(i)] = doc["_id"]
+            sb.statement_args["doc"+str(i)] = doc_json
             xval = ""
             for col in extra_cols:
                 xval += ", %(" + col + str(i) + ")s"
-                statement_args[col + str(i)] = doc.get(col, None)
+                sb.statement_args[col + str(i)] = doc.get(col, None)
 
-            statement += "(%(id"+str(i)+")s, 1, %(doc"+str(i)+")s" + xval + ")"
+            sb.append("(%(id", str(i), ")s, 1, %(doc", str(i), ")s", xval, ")")
 
         with self.pool.cursor() as cur:
-            cur.execute(statement, statement_args)
+            cur.execute(*sb.build())
             self._log_statement(cursor=cur)
             if cur.rowcount != len(docs):
                 log.warn("Number of objects created (%s) != objects given (%s) in %s", cur.rowcount, len(docs), table)
@@ -487,7 +486,7 @@ class PostgresDataStore(DataStore):
         return doc["_id"], doc["_rev"]
 
     def _get_extra_cols(self, doc, table, profile):
-        extra_cols = None
+        extra_cols = []
         if profile == DataStore.DS_PROFILE.RESOURCES:
             if doc.get("type_", None) == "Association":
                 extra_cols = ["s", "st", "p", "o", "ot", "retired"]
