@@ -330,22 +330,45 @@ class PostgresDataStore(DataStore):
         log.debug('create_doc_mult(): create %s documents', len(docs))
 
         datastore_name = self._get_datastore_name(datastore_name)
-        # Could use cur.executemany() here but does not allow for case-by-case reaction to failure
+
+        # Take the first document to determine the type of objects (resource, association, dir entry)
+        extra_cols, table = self._get_extra_cols(docs[0], datastore_name, self.profile)
+        xcol = ""
+        if extra_cols:
+            for col in extra_cols:
+                xcol += ", %s" % col
+        statement = "INSERT INTO "+table+" (id, rev, doc" + xcol + ") VALUES "
+        statement_args = dict()
+
+        # Build a large statement
+        for i, doc in enumerate(docs):
+            object_id = object_ids[i] if object_ids else None
+            if "_id" not in doc:
+                object_id = object_id or self.get_unique_id()
+                doc["_id"] = object_id
+
+            doc["_rev"] = "1"
+            doc_json = json.dumps(doc)
+
+            if i>0:
+                statement += ","
+
+            statement_args["id"+str(i)] = doc["_id"]
+            statement_args["doc"+str(i)] = doc_json
+            xval = ""
+            for col in extra_cols:
+                xval += ", %(" + col + str(i) + ")s"
+                statement_args[col + str(i)] = doc.get(col, None)
+
+            statement += "(%(id"+str(i)+")s, 1, %(doc"+str(i)+")s" + xval + ")"
+
         with self.pool.cursor() as cur:
-            try:
-                result_list = []
-                for i, doc in enumerate(docs):
-                    object_id = object_ids[i] if object_ids else None
-                    try:
-                        cur.execute("SAVEPOINT bulk_update")
-                        oid, version = self._create_doc(cur, datastore_name, doc, object_id=object_id)
-                    except IntegrityError:
-                        log.warn("Doc exists, trying update id=%s", object_id)
-                        cur.execute("ROLLBACK TO SAVEPOINT bulk_update")
-                        oid, version = self._update_doc(cur, datastore_name, doc)
-                    result_list.append((True, oid, version))
-            except DatabaseError:
-                raise
+            cur.execute(statement, statement_args)
+            self._log_statement(cursor=cur)
+            if cur.rowcount != len(docs):
+                log.warn("Number of objects created (%s) != objects given (%s) in %s", cur.rowcount, len(docs), table)
+
+        result_list = [(True, doc["_id"], doc["_rev"]) for doc in docs]
 
         return result_list
 
@@ -703,7 +726,55 @@ class PostgresDataStore(DataStore):
 
     def _find_all_docs(self, view_name, key=None, keys=None, start_key=None, end_key=None,
                        id_only=True, filter=None):
-        raise NotImplementedError()
+        if view_name != "_all_docs":
+            log.warn("Using _all_docs view instead of requested %s", view_name)
+
+        datastore_name = self._get_datastore_name()
+        dsn_res = datastore_name
+        dsn_assoc = datastore_name + "_assoc"
+        dsn_dir = datastore_name + "_dir"
+
+        if id_only:
+            query = "SELECT * FROM (SELECT id FROM "+dsn_res+\
+                    " UNION ALL SELECT id FROM "+dsn_assoc+\
+                    " UNION ALL SELECT id FROM "+dsn_dir+\
+                    ") AS res"
+        else:
+            query = "SELECT * FROM (SELECT id, doc FROM "+dsn_res+\
+                    " UNION ALL SELECT id, doc FROM "+dsn_assoc+\
+                    " UNION ALL SELECT id, doc FROM "+dsn_dir+\
+                    ") AS res"
+
+        query_clause = ""
+        query_args = dict(key=key, start=start_key, end=end_key)
+
+        if key:
+            query_clause += " WHERE id=%(key)s"
+        elif keys:
+            query_clause += " WHERE id IN ("
+            for i, key in enumerate(keys):
+                if i>0:
+                    query_clause += ","
+                keyname = "key"+str(i)
+                query_clause += "%("+keyname+")s"
+                query_args[keyname] = key
+            query_clause += ")"
+        elif start_key or end_key:
+            raise NotImplementedError()
+
+        extra_clause = filter.get("extra_clause", "")
+        with self.pool.cursor() as cur:
+            #print query + query_clause + extra_clause, query_args
+            cur.execute(query + query_clause + extra_clause, query_args)
+            self._log_statement(cursor=cur)
+            rows = cur.fetchall()
+
+        if id_only:
+            res_rows = [(self._prep_id(row[0]), [], None) for row in rows]
+        else:
+            res_rows = [(self._prep_id(row[0]), [], self._prep_doc(row[-1])) for row in rows]
+
+        return res_rows
 
     def _find_directory(self, view_name, key=None, keys=None, start_key=None, end_key=None,
                         id_only=True, filter=None):
