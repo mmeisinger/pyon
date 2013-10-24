@@ -21,7 +21,7 @@ from pyon.datastore.datastore_common import DataStore
 from pyon.datastore.postgresql.pg_util import PostgresConnectionPool, StatementBuilder
 
 from pyon.util.containers import get_ion_ts, get_datetime_str
-
+from pyon.util.tracer import CallTracer
 from ooi.logging import log
 
 MAX_STATEMENT_LOG = 5000
@@ -54,8 +54,9 @@ class PostgresDataStore(DataStore):
         self.profile = profile
         self.datastore_name = datastore_name
 
+        self._call_tracer = CallTracer(scope="DB." + (self.datastore_name or "_"))
+
         self._datastore_cache = {}
-        self._statement_log = []
 
         # Database (Postgres database) and datastore (database table) handling. Scope with
         # given scope (e.g. sysname) and make all lowercase for couch compatibility
@@ -202,7 +203,7 @@ class PostgresDataStore(DataStore):
 
         with self.pool.cursor() as cur:
             cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
-            log_entry = self._log_statement(cursor=cur)
+            self._log_statement(cursor=cur)
             table_list = cur.fetchall()
             table_list = [e[0] for e in table_list]
             # print self.database, datastore_name, table_list
@@ -997,40 +998,14 @@ class PostgresDataStore(DataStore):
         doc = internal_doc
         return doc
 
-    def _log_statement(self, context=None, statement=None, cursor=None, result=None, **kwargs):
-        if not context:
-            stack = inspect.stack()
-            frame_num = 1
-            context = []
-            while len(stack) > frame_num and frame_num < 15:
-                exec_line = "%s:%s:%s" % (stack[frame_num][1], stack[frame_num][2], stack[frame_num][3])
-                context.insert(0, exec_line)
-                if exec_line.endswith("_control_flow") or exec_line.endswith("load_ion") or exec_line.endswith("spawn_process"):
-                    break
-                frame_num += 1
-        rowcount = 0
+    def _log_statement(self, statement=None, cursor=None, result=None, **kwargs):
+        status = -1
         if cursor:
             statement = cursor.query
-            rowcount = cursor.rowcount
+            status = cursor.rowcount
         log_entry = dict(
-            seq=0 if not self._statement_log else self._statement_log[0]['seq'] + 1,
-            ts=get_ion_ts(),
-            context=context,
             statement=statement,
-            rowcount=rowcount
-            #kwargs=kwargs
+            status=status
         )
-        self._statement_log.insert(0, log_entry)
-        if len(self._statement_log) > MAX_STATEMENT_LOG + 100:
-            self._statement_log = self._statement_log[:MAX_STATEMENT_LOG]
+        self._call_tracer.log_call(log_entry, include_stack=True)
         return log_entry
-
-    def _log_query_results(self, log_entry, results):
-        log_entry["statement_type"] = "query"
-        log_entry["numrows"] = len(results)
-
-    def _print_statement_log(self, max_log=10000, reverse=True):
-        for i, log_entry in enumerate(self._statement_log[:max_log] if reverse else reversed(self._statement_log[-max_log:])):
-            print "\nSQL %s @%s (%s) -> %s" % (log_entry['seq'], log_entry['ts'], get_datetime_str(log_entry['ts'], show_millis=True), log_entry['rowcount'])
-            print log_entry['statement']
-            print " " + "\n ".join(log_entry['context'])

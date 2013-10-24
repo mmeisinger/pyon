@@ -1361,6 +1361,9 @@ class RPCServer(RequestResponseServer):
     def __str__(self):
         return "RPCServer: recv_name: %s" % (str(self._recv_name))
 
+from pyon.util.tracer import CallTracer
+tracer = CallTracer(scope="MSG")
+
 def log_message(prefix="MESSAGE", msg=None, headers=None, recv=None, delivery_tag=None, is_send=True):
     """
     Utility function to print an legible comprehensive summary of a received message.
@@ -1386,5 +1389,19 @@ def log_message(prefix="MESSAGE", msg=None, headers=None, recv=None, delivery_ta
             _delivery = "\nDELIVERY: tag=%s"%delivery_tag if delivery_tag else ""
             rpclog.debug("%s: %s%s%s -> %s%s%s %s:\nHEADERS: %s\nCONTENT: %s%s",
                 prefix, _send_hl, _sender, _send_hl, _recv_hl, _recv, _recv_hl, _opstat, str(headers), _msg, _delivery)
+        except Exception as ex:
+            log.warning("%s log error: %s", prefix, str(ex))
+
+    if is_send:
+        try:
+            headers = headers or {}
+            _sender = headers.get('sender', '?') + "(" + headers.get('sender-name', '') + ")"
+            _recv = headers.get('receiver', '?')
+            _opstat = "op=%s" % headers.get('op', '') if 'op' in headers else "status=%s" % headers.get('status_code', '')
+
+            statement = "%s -> %s %s (%s)" % (_sender, _recv, _opstat, len(msg))
+
+            log_entry = dict(statement=statement, status="SENT")
+            tracer.log_call(log_entry, include_stack=False)
         except Exception as ex:
             log.warning("%s log error: %s", prefix, str(ex))

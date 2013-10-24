@@ -18,6 +18,7 @@ from pyon.util.log import log
 from pyon.util.context import LocalContextMixin
 from pyon.util.greenlet_plugin import GreenletLeak
 from pyon.util.file_sys import FileSystem
+from pyon.util.tracer import CallTracer
 
 from interface.objects import ContainerStateEnum
 from interface.services.icontainer_agent import BaseContainerAgent
@@ -71,6 +72,7 @@ class Container(BaseContainerAgent):
         self.container = self  # Make self appear as process to service clients
         self.CCAP = CCAP
         self.CFG = CFG
+        self.tracer = CallTracer
 
         log.debug("Container (sysname=%s) initializing ..." % bootstrap.get_sys_name())
 
