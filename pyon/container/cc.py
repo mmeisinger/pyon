@@ -73,6 +73,7 @@ class Container(BaseContainerAgent):
         self.CCAP = CCAP
         self.CFG = CFG
         self.tracer = CallTracer
+        self.tracer.configure(CFG.get_safe("container.tracer", {}))
 
         log.debug("Container (sysname=%s) initializing ..." % bootstrap.get_sys_name())
 

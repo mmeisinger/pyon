@@ -10,12 +10,15 @@ from pyon.util.containers import get_ion_ts, get_datetime_str
 
 from ooi.logging import log
 
-MAX_LOG_LEN = 5000
+DEFAULT_CONFIG = {"enabled": True,
+                  "max_entries": 5000,
+                  }
 
 # Global trace log data
-trace_data = dict(trace_log=[],    # Global log
-                  format_cb={},    # Scope specific formatter function
-                  scope_seq={},    # Sequence number per scope
+trace_data = dict(trace_log=[],             # Global log
+                  format_cb={},             # Scope specific formatter function
+                  scope_seq={},             # Sequence number per scope
+                  config=DEFAULT_CONFIG,    # Store config dict
                   )
 SCOPE_COLOR = {
     "MSG": 31,
@@ -24,6 +27,7 @@ SCOPE_COLOR = {
     "DB.events": 35,
     "DB.objects": 36,
     "DB.state": 36,
+    "DB._": 36,
 }
 DEFAULT_COLOR = 39
 
@@ -39,6 +43,9 @@ class CallTracer(object):
 
     @staticmethod
     def log_scope_call(scope, log_entry, include_stack=True):
+        if not trace_data["config"].get("enabled", False):
+            return
+
         log_entry["scope"] = scope
         if not "ts" in log_entry:
             log_entry["ts"] = get_ion_ts()
@@ -53,14 +60,14 @@ class CallTracer(object):
                 exec_line = "%s:%s:%s" % (stack[frame_num][1], stack[frame_num][2], stack[frame_num][3])
                 context.insert(0, exec_line)
                 if exec_line.endswith("_control_flow") or exec_line.endswith("load_ion") or exec_line.endswith("spawn_process")\
-                    or exec_line.endswith(":main"):
+                    or exec_line.endswith(":main") or exec_line.endswith(":dispatch_request"):
                     break
                 frame_num += 1
             log_entry["stack"] = context
 
         trace_data["trace_log"].append(log_entry)
-        if len(trace_data["trace_log"]) > MAX_LOG_LEN + 100:
-            trace_data["trace_log"] = trace_data["trace_log"][-MAX_LOG_LEN:]
+        if len(trace_data["trace_log"]) > trace_data["config"]["max_entries"] + 100:
+            trace_data["trace_log"] = trace_data["trace_log"][-trace_data["config"]["max_entries"]:]
 
     @staticmethod
     def clear_scope(scope):
@@ -71,20 +78,38 @@ class CallTracer(object):
         trace_data["trace_log"] = []
 
     @staticmethod
-    def print_log(scope=None, max_log=10000, reverse=False, color=True, truncate=2000, stack=True):
+    def save_log(**kwargs):
+        kwargs["tofile"] = True
+        CallTracer.print_log(**kwargs)
+
+    @staticmethod
+    def print_log(scope=None, max_log=10000, reverse=False, color=True, truncate=2000, stack=True, tofile=False):
         cnt = 0
-        for log_entry in reversed(trace_data["trace_log"]) if reverse else trace_data["trace_log"]:
-            logscope = log_entry["scope"]
-            if not scope or logscope.startswith(scope):
-                formatter = trace_data["format_cb"].get(logscope, None)
-                if formatter:
-                    log_txt = formatter(log_entry)
-                else:
-                    log_txt = CallTracer._default_formatter(log_entry, truncate=truncate, stack=stack, color=color)
-                print log_txt
-                cnt += 1
-            if cnt >= max_log:
-                break
+        f = None
+        try:
+            if tofile:
+                import datetime
+                dtstr = datetime.datetime.today().strftime('%Y%m%d_%H%M%S')
+                path = "interface/tracelog_%s.log" % dtstr
+                f = open(path, "w")
+            for log_entry in reversed(trace_data["trace_log"]) if reverse else trace_data["trace_log"]:
+                logscope = log_entry["scope"]
+                if not scope or logscope.startswith(scope):
+                    formatter = trace_data["format_cb"].get(logscope, None) or CallTracer._default_formatter
+                    if tofile:
+                        color = False
+                    log_txt = formatter(log_entry, truncate=truncate, stack=stack, color=color)
+                    if tofile:
+                        f.write(log_txt)
+                        f.write("\n")
+                    else:
+                        print log_txt
+                    cnt += 1
+                if cnt >= max_log:
+                    break
+        finally:
+            if f:
+                f.close()
 
     @staticmethod
     def _default_formatter(log_entry, **kwargs):
@@ -108,3 +133,11 @@ class CallTracer(object):
             frags.append("\n ")
             frags.append("\n ".join(log_entry["stack"]))
         return "".join(frags)
+
+    @staticmethod
+    def configure(config):
+        trace_data["config"] = config
+        enabled = bool(config.get("enabled", False))
+        trace_data["enabled"] = enabled
+        if not enabled:
+            CallTracer.clear_all()

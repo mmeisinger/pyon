@@ -5,6 +5,7 @@
 from gevent import event, coros
 from gevent.timeout import Timeout
 from zope import interface
+import pprint
 import uuid
 import time
 import inspect
@@ -30,6 +31,9 @@ rpclog = logging.getLogger('rpc')
 # create global accumulator for RPC times
 from ooi.timer import Timer, Accumulator
 stats = Accumulator(keys='!total', persist=True)
+
+# Create global call tracer for RPC message tracing
+from pyon.util.tracer import CallTracer
 
 
 class EndpointError(StandardError):
@@ -149,6 +153,10 @@ class EndpointUnit(object):
                     post-interceptor. Derivations will likely override the return value.
         """
         new_msg, new_headers = self.intercept_out(msg, headers)
+
+        log_entry = dict(status="SENT", headers=new_headers, content_length=len(new_msg), content=str(new_msg)[:500])
+        tracer.log_call(log_entry, include_stack=False)
+
         self.channel.send(new_msg, new_headers)
 
         return new_msg, new_headers
@@ -1361,8 +1369,6 @@ class RPCServer(RequestResponseServer):
     def __str__(self):
         return "RPCServer: recv_name: %s" % (str(self._recv_name))
 
-from pyon.util.tracer import CallTracer
-tracer = CallTracer(scope="MSG")
 
 def log_message(prefix="MESSAGE", msg=None, headers=None, recv=None, delivery_tag=None, is_send=True):
     """
@@ -1392,16 +1398,56 @@ def log_message(prefix="MESSAGE", msg=None, headers=None, recv=None, delivery_ta
         except Exception as ex:
             log.warning("%s log error: %s", prefix, str(ex))
 
-    if is_send:
+def _msg_trace_formatter(log_entry, **kwargs):
+    headers = log_entry.get("headers", {})
+    content_length = log_entry.get("content_length", 0)
+    content = log_entry.get("content", "")
+
+    frags = []
+
+    if "sender" in headers or "sender-service" in headers:
+        # Case RPC msg
+        sender_service = headers.get('sender-service', '')
+        sender = headers.pop('sender', '')
+        sender_name = headers.pop('sender-name', '')
+        sender_txt = sender_name or sender_service + " (%s)" % sender if sender else ""
+        recv = headers.pop('receiver', '?')
+        op = "op=%s" % headers.pop('op', '?')
+        stat = "status=%s" % headers.pop('status_code', '?')
+        conv_seq = headers.get('conv-seq', '0')
+
+        if conv_seq == 1:
+            frags.append("RPC REQUEST %s -> %s %s (%s bytes)" % (sender_txt, recv, op, content_length))
+        else:
+            frags.append("RPC RESP %s -> %s %s (%s bytes)" % (sender_txt, recv, stat, content_length))
+
         try:
-            headers = headers or {}
-            _sender = headers.get('sender', '?') + "(" + headers.get('sender-name', '') + ")"
-            _recv = headers.get('receiver', '?')
-            _opstat = "op=%s" % headers.get('op', '') if 'op' in headers else "status=%s" % headers.get('status_code', '')
+            import msgpack
+            msg = msgpack.unpackb(content)
+            frags.append("\n ")
+            frags.append(str(msg))
+        except exception as ex:
+            pass
+    else:
+        # Case event/other msg
+        try:
+            import msgpack
+            msg = msgpack.unpackb(content)
+            ev_type = msg["type_"] if isinstance(msg, dict) and "type_" in msg else "?"
+            frags.append("EVENT %s (%s bytes)" % (ev_type, content_length))
+            frags.append("\n ")
+            frags.append(str(msg))
 
-            statement = "%s -> %s %s (%s)" % (_sender, _recv, _opstat, len(msg))
+        except Exception:
+            frags.append("UNKNOWN (%s bytes)" % (content_length))
+            frags.append("\n ")
+            frags.append(content)
 
-            log_entry = dict(statement=statement, status="SENT")
-            tracer.log_call(log_entry, include_stack=False)
-        except Exception as ex:
-            log.warning("%s log error: %s", prefix, str(ex))
+    frags.append("\n ")
+    frags.append(str(headers))
+    log_entry["statement"] = "".join(frags)
+
+    return CallTracer._default_formatter(log_entry, **kwargs)
+
+tracer = CallTracer(scope="MSG", formatter=_msg_trace_formatter)
+
