@@ -5,6 +5,7 @@
 __author__ = 'Michael Meisinger'
 
 import inspect
+from collections import defaultdict
 
 from pyon.util.containers import get_ion_ts, get_datetime_str
 
@@ -66,8 +67,8 @@ class CallTracer(object):
             log_entry["stack"] = context
 
         trace_data["trace_log"].append(log_entry)
-        if len(trace_data["trace_log"]) > trace_data["config"]["max_entries"] + 100:
-            trace_data["trace_log"] = trace_data["trace_log"][-trace_data["config"]["max_entries"]:]
+        if len(trace_data["trace_log"]) > trace_data["config"].get("max_entries", DEFAULT_CONFIG["max_entries"]) + 100:
+            trace_data["trace_log"] = trace_data["trace_log"][-trace_data["config"].get("max_entries", DEFAULT_CONFIG["max_entries"]):]
 
     @staticmethod
     def clear_scope(scope):
@@ -83,8 +84,11 @@ class CallTracer(object):
         CallTracer.print_log(**kwargs)
 
     @staticmethod
-    def print_log(scope=None, max_log=10000, reverse=False, color=True, truncate=2000, stack=True, tofile=False):
+    def print_log(scope=None, max_log=10000, reverse=False, color=True, truncate=2000, stack=True,
+                  count=True, filter=None, tofile=False):
         cnt = 0
+        counters = defaultdict(int)
+        startts, endts = 0, 0
         f = None
         try:
             if tofile:
@@ -94,19 +98,36 @@ class CallTracer(object):
                 f = open(path, "w")
             for log_entry in reversed(trace_data["trace_log"]) if reverse else trace_data["trace_log"]:
                 logscope = log_entry["scope"]
+                scope_cat = logscope.split(".", 1)[0]
                 if not scope or logscope.startswith(scope):
+                    if filter and not filter(log_entry):
+                        continue
                     formatter = trace_data["format_cb"].get(logscope, None) or CallTracer._default_formatter
                     if tofile:
                         color = False
                     log_txt = formatter(log_entry, truncate=truncate, stack=stack, color=color)
+                    logscope = log_entry["scope"]      # Read again to enable formatter to specialize scope
+                    if scope and logscope.startswith(scope):
+                        continue
                     if tofile:
                         f.write(log_txt)
                         f.write("\n")
                     else:
                         print log_txt
+
+                    if not startts:
+                        startts = log_entry["ts"]
+                    endts = log_entry["ts"]
+                    if count:
+                        counters[logscope] += 1
+                        if scope_cat != logscope:
+                            counters[scope_cat] += 1
                     cnt += 1
                 if cnt >= max_log:
                     break
+            if count:
+                print "\nCounts:", ", ".join(["%s=%s" % (k, counters[k]) for k in sorted(counters)])
+                print "Elapsed time:", abs(int(endts) - int(startts)) / 1000.0, "s"
         finally:
             if f:
                 f.close()
@@ -136,7 +157,7 @@ class CallTracer(object):
 
     @staticmethod
     def configure(config):
-        trace_data["config"] = config
+        trace_data["config"] = config or {}
         enabled = bool(config.get("enabled", False))
         trace_data["enabled"] = enabled
         if not enabled:

@@ -2,11 +2,10 @@ This directory contains a fully functional PostgreSQL datastore implementation f
 
 REQUIREMENTS
 - PostgreSQL 9.2.x or higher
-- psycopg2 Python client
+- psycopg2 Python client 2.5 or higher (needs to do automatic JSON decoding)
 
 ISSUES:
 - Replace string concatenation when constructing statements
-- resource finds need to exclude resources in RETIRED state
 - support descending order for all finds
 - create_mult is (ab)used for both create and update in one call by preload!
 - list_datastore lists all tables, not just "datastores"

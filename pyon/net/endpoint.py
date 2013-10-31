@@ -1408,23 +1408,24 @@ def _msg_trace_formatter(log_entry, **kwargs):
     if "sender" in headers or "sender-service" in headers:
         # Case RPC msg
         sender_service = headers.get('sender-service', '')
-        sender = headers.pop('sender', '')
+        sender = headers.pop('sender', '').split(",", 1)[-1]
         sender_name = headers.pop('sender-name', '')
         sender_txt = sender_name or sender_service + " (%s)" % sender if sender else ""
-        recv = headers.pop('receiver', '?')
+        recv = headers.pop('receiver', '?').split(",", 1)[-1]
         op = "op=%s" % headers.pop('op', '?')
         stat = "status=%s" % headers.pop('status_code', '?')
         conv_seq = headers.get('conv-seq', '0')
 
         if conv_seq == 1:
             frags.append("RPC REQUEST %s -> %s %s (%s bytes)" % (sender_txt, recv, op, content_length))
+            #log_entry["scope"] = "MSG.rpc1"
         else:
-            frags.append("RPC RESP %s -> %s %s (%s bytes)" % (sender_txt, recv, stat, content_length))
-
+            frags.append("RPC REPLY %s -> %s %s (%s bytes)" % (sender_txt, recv, stat, content_length))
+            #log_entry["scope"] = "MSG.rpc2"
         try:
             import msgpack
             msg = msgpack.unpackb(content)
-            frags.append("\n ")
+            frags.append("\n C:")
             frags.append(str(msg))
         except exception as ex:
             pass
@@ -1435,15 +1436,15 @@ def _msg_trace_formatter(log_entry, **kwargs):
             msg = msgpack.unpackb(content)
             ev_type = msg["type_"] if isinstance(msg, dict) and "type_" in msg else "?"
             frags.append("EVENT %s (%s bytes)" % (ev_type, content_length))
-            frags.append("\n ")
+            frags.append("\n C:")
             frags.append(str(msg))
 
         except Exception:
             frags.append("UNKNOWN (%s bytes)" % (content_length))
-            frags.append("\n ")
+            frags.append("\n C:")
             frags.append(content)
 
-    frags.append("\n ")
+    frags.append("\n H:")
     frags.append(str(headers))
     log_entry["statement"] = "".join(frags)
 
