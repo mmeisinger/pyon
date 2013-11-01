@@ -16,31 +16,35 @@ DEFAULT_CONFIG = {"enabled": True,
                   }
 
 # Global trace log data
-trace_data = dict(trace_log=[],             # Global log
-                  format_cb={},             # Scope specific formatter function
-                  scope_seq={},             # Sequence number per scope
-                  config=DEFAULT_CONFIG,    # Store config dict
+trace_data = dict(trace_log=[],                # Global log
+                  format_cb={},                # Scope specific formatter function
+                  scope_seq=defaultdict(int),  # Sequence number per scope
+                  config=DEFAULT_CONFIG,       # Store config dict
                   )
 SCOPE_COLOR = {
     "MSG": 31,
     "GW": 32,
     "DB.resources": 34,
     "DB.events": 35,
-    "DB.objects": 36,
-    "DB.state": 36,
-    "DB._": 36,
+    #"DB.objects": 36,
+    #"DB.state": 36,
+    "DB": 36,
 }
 DEFAULT_COLOR = 39
+
 
 class CallTracer(object):
     def __init__(self, scope, formatter=None):
         self.scope = scope
+        if formatter:
+            self.set_formatter(scope, formatter)
+
+    @staticmethod
+    def set_formatter(scope, formatter):
         trace_data["format_cb"][scope] = formatter
-        if not scope in trace_data["scope_seq"]:
-            trace_data["scope_seq"][scope] = 0
 
     def log_call(self, log_entry, include_stack=True):
-        CallTracer.log_scope_call(self.scope, log_entry, include_stack=include_stack)
+        self.log_scope_call(self.scope, log_entry, include_stack=include_stack)
 
     @staticmethod
     def log_scope_call(scope, log_entry, include_stack=True):
@@ -99,33 +103,40 @@ class CallTracer(object):
             for log_entry in reversed(trace_data["trace_log"]) if reverse else trace_data["trace_log"]:
                 logscope = log_entry["scope"]
                 scope_cat = logscope.split(".", 1)[0]
-                if not scope or logscope.startswith(scope):
-                    if filter and not filter(log_entry):
-                        continue
-                    formatter = trace_data["format_cb"].get(logscope, None) or CallTracer._default_formatter
-                    if tofile:
-                        color = False
-                    log_txt = formatter(log_entry, truncate=truncate, stack=stack, color=color)
-                    logscope = log_entry["scope"]      # Read again to enable formatter to specialize scope
-                    if scope and logscope.startswith(scope):
-                        continue
-                    if tofile:
-                        f.write(log_txt)
-                        f.write("\n")
-                    else:
-                        print log_txt
+                if scope and not logscope.startswith(scope):
+                    continue
 
-                    if not startts:
-                        startts = log_entry["ts"]
-                    endts = log_entry["ts"]
-                    if count:
-                        counters[logscope] += 1
-                        if scope_cat != logscope:
-                            counters[scope_cat] += 1
-                    cnt += 1
+                formatter = trace_data["format_cb"].get(logscope, None) or CallTracer._default_formatter
+                if tofile:
+                    color = False
+                try:
+                    log_txt = formatter(log_entry, truncate=truncate, stack=stack, color=color)
+                except Exception as ex:
+                    log_txt = "ERROR formatting: %s" % str(ex)
+                logscope = log_entry["scope"]      # Read again to enable formatter to specialize scope
+                if scope and not logscope.startswith(scope):
+                    continue
+                # Call it here because the formatter may have modified the entry
+                if filter and not filter(log_entry):
+                    continue
+                if tofile:
+                    f.write(log_txt)
+                    f.write("\n")
+                else:
+                    print log_txt
+
+                if not startts:
+                    startts = log_entry["ts"]
+                endts = log_entry["ts"]
+                if count:
+                    counters[logscope] += 1
+                    if scope_cat != logscope:
+                        counters[scope_cat] += 1
+                cnt += 1
                 if cnt >= max_log:
                     break
             if count:
+                counters["SKIP"] = len(trace_data["trace_log"]) - cnt
                 print "\nCounts:", ", ".join(["%s=%s" % (k, counters[k]) for k in sorted(counters)])
                 print "Elapsed time:", abs(int(endts) - int(startts)) / 1000.0, "s"
         finally:
@@ -137,17 +148,23 @@ class CallTracer(object):
         truncate = kwargs.get("truncate", 0)
         color = kwargs.get("color", False)
         logscope = log_entry["scope"]
-        entry_color = SCOPE_COLOR.get(logscope, DEFAULT_COLOR)
+        scope_cat = logscope.split(".", 1)[0]
+
+        entry_color = SCOPE_COLOR.get(logscope, None) or SCOPE_COLOR.get(scope_cat, DEFAULT_COLOR)
         frags = []
         if color:
-            frags.append("\033[%sm" % entry_color)
+            frags.append("\033[1m\033[%sm" % entry_color)
         frags.append("\n%s: #%s @%s (%s) -> %s" % (log_entry['scope'], log_entry['seq'], log_entry['ts'], get_datetime_str(log_entry['ts'], show_millis=True), log_entry.get("status", "OK")))
+        if color:
+            frags.append("\033[22m")    # Bold off
+        statement = log_entry.get('statement', "")
         if truncate:
-            frags.append("\n" + log_entry['statement'][:truncate])
-            if len(log_entry['statement']) > truncate:
+            frags.append("\n" + statement[:truncate])
+            if len(statement) > truncate:
                 frags.append("...")
+                frags.append("[%s]" % (len(statement) - truncate))
         else:
-            frags.append("\n" + log_entry['statement'])
+            frags.append("\n" + statement)
         if color:
             frags.append("\033[0m")
         if "stack" in log_entry and kwargs.get("stack", False):

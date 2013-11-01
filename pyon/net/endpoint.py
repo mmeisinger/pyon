@@ -32,8 +32,9 @@ rpclog = logging.getLogger('rpc')
 from ooi.timer import Timer, Accumulator
 stats = Accumulator(keys='!total', persist=True)
 
-# Create global call tracer for RPC message tracing
-from pyon.util.tracer import CallTracer
+# Callback hooks for message in and out. Signature: def callback(msg, headers, env)
+callback_msg_out = None
+callback_msg_in = None
 
 
 class EndpointError(StandardError):
@@ -154,8 +155,8 @@ class EndpointUnit(object):
         """
         new_msg, new_headers = self.intercept_out(msg, headers)
 
-        log_entry = dict(status="SENT", headers=new_headers, content_length=len(new_msg), content=str(new_msg)[:500])
-        tracer.log_call(log_entry, include_stack=False)
+        # Provide a hook for all outgoing messages before they hit transport
+        trigger_msg_out_callback(new_msg, new_headers, self)
 
         self.channel.send(new_msg, new_headers)
 
@@ -399,6 +400,9 @@ class ListeningBaseEndpoint(BaseEndpoint):
             self.body           = None
             self.headers        = None
             self.error          = None
+
+            # Provide a hook for any message received
+            trigger_msg_in_callback(self.raw_body, self.raw_headers, self.delivery_tag, self.endpoint)
 
         def make_body(self):
             """
@@ -789,6 +793,10 @@ class RequestEndpointUnit(BidirectionalEndpointUnit):
             # it and consume again
             while True:
                 rmsg, rheaders, rdtag = self.channel.recv()
+
+                # Provide a hook for any message received
+                trigger_msg_in_callback(rmsg, rheaders, rdtag, self)
+
                 try:
                     nm, nh = self.intercept_in(rmsg, rheaders)
                 finally:
@@ -1398,57 +1406,32 @@ def log_message(prefix="MESSAGE", msg=None, headers=None, recv=None, delivery_ta
         except Exception as ex:
             log.warning("%s log error: %s", prefix, str(ex))
 
-def _msg_trace_formatter(log_entry, **kwargs):
-    headers = log_entry.get("headers", {})
-    content_length = log_entry.get("content_length", 0)
-    content = log_entry.get("content", "")
 
-    frags = []
-
-    if "sender" in headers or "sender-service" in headers:
-        # Case RPC msg
-        sender_service = headers.get('sender-service', '')
-        sender = headers.pop('sender', '').split(",", 1)[-1]
-        sender_name = headers.pop('sender-name', '')
-        sender_txt = sender_name or sender_service + " (%s)" % sender if sender else ""
-        recv = headers.pop('receiver', '?').split(",", 1)[-1]
-        op = "op=%s" % headers.pop('op', '?')
-        stat = "status=%s" % headers.pop('status_code', '?')
-        conv_seq = headers.get('conv-seq', '0')
-
-        if conv_seq == 1:
-            frags.append("RPC REQUEST %s -> %s %s (%s bytes)" % (sender_txt, recv, op, content_length))
-            #log_entry["scope"] = "MSG.rpc1"
-        else:
-            frags.append("RPC REPLY %s -> %s %s (%s bytes)" % (sender_txt, recv, stat, content_length))
-            #log_entry["scope"] = "MSG.rpc2"
+def trigger_msg_out_callback(body, headers, ep_unit):
+    """Helper function to perform a message out callback"""
+    if callback_msg_out:
         try:
-            import msgpack
-            msg = msgpack.unpackb(content)
-            frags.append("\n C:")
-            frags.append(str(msg))
-        except exception as ex:
-            pass
-    else:
-        # Case event/other msg
+            env = {}
+            if hasattr(ep_unit, "channel"):
+                env["routing_key"] = str(getattr(ep_unit.channel, "_send_name", "?"))
+            if hasattr(ep_unit, "_process"):
+                env["process"] = ep_unit._process
+            env["ep_type"] = type(ep_unit)
+            callback_msg_out(body, headers, env)
+        except Exception as ex:
+            log.warn("Message out callback error: %s", str(ex))
+
+def trigger_msg_in_callback(body, headers, delivery_tag, ep_unit):
+    """Helper function to perform a message in callback"""
+    if callback_msg_in:
         try:
-            import msgpack
-            msg = msgpack.unpackb(content)
-            ev_type = msg["type_"] if isinstance(msg, dict) and "type_" in msg else "?"
-            frags.append("EVENT %s (%s bytes)" % (ev_type, content_length))
-            frags.append("\n C:")
-            frags.append(str(msg))
-
-        except Exception:
-            frags.append("UNKNOWN (%s bytes)" % (content_length))
-            frags.append("\n C:")
-            frags.append(content)
-
-    frags.append("\n H:")
-    frags.append(str(headers))
-    log_entry["statement"] = "".join(frags)
-
-    return CallTracer._default_formatter(log_entry, **kwargs)
-
-tracer = CallTracer(scope="MSG", formatter=_msg_trace_formatter)
-
+            env = {}
+            env["delivery_tag"] = delivery_tag
+            if hasattr(ep_unit, "_process"):
+                env["process"] = ep_unit._process
+            if hasattr(ep_unit, "_endpoint"):
+                env["recv_name"] = str(getattr(ep_unit._endpoint, "_recv_name", ""))
+            env["ep_type"] = type(ep_unit)
+            callback_msg_in(body, headers, env)
+        except Exception as ex:
+            log.warn("Message in callback error: %s", str(ex))
