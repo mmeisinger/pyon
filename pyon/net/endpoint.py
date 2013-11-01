@@ -1417,7 +1417,7 @@ def trigger_msg_out_callback(body, headers, ep_unit):
             if hasattr(ep_unit, "_process"):
                 env["process"] = ep_unit._process
             env["ep_type"] = type(ep_unit)
-            callback_msg_out(body, headers, env)
+            callback_msg_out(body, dict(headers), env)  # Must copy headers because they get muted during processing
         except Exception as ex:
             log.warn("Message out callback error: %s", str(ex))
 
@@ -1432,6 +1432,6 @@ def trigger_msg_in_callback(body, headers, delivery_tag, ep_unit):
             if hasattr(ep_unit, "_endpoint"):
                 env["recv_name"] = str(getattr(ep_unit._endpoint, "_recv_name", ""))
             env["ep_type"] = type(ep_unit)
-            callback_msg_in(body, headers, env)
+            callback_msg_in(body, dict(headers), env)  # Must copy headers because they get muted during processing
         except Exception as ex:
             log.warn("Message in callback error: %s", str(ex))

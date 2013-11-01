@@ -294,21 +294,24 @@ class ContainerTracer(object):
 
     @staticmethod
     def _msg_trace_formatter(log_entry, **kwargs):
+        # Warning: Make sure this code is reentrant. Will be called multiple times for the same entry
         frags = []
+        msg_type = "UNKNOWN"
+        sub_type = ""
         try:
             content = log_entry.get("content", "")
-            headers = log_entry.get("headers", {})
+            headers = dict(log_entry.get("headers", {}))
             env = log_entry.get("env", {})
-            msg_type = "UNKNOWN"
 
             if "sender" in headers or "sender-service" in headers:
                 # Case RPC msg
                 sender_service = headers.get('sender-service', '')
                 sender = headers.pop('sender', '').split(",", 1)[-1]
                 sender_name = headers.pop('sender-name', '')
-                sender_txt = sender_name or sender_service + " (%s)" % sender if sender else ""
+                sender_txt = (sender_name or sender_service) + " (%s)" % sender if sender else ""
                 recv = headers.pop('receiver', '?').split(",", 1)[-1]
                 op = "op=%s" % headers.pop('op', '?')
+                sub_type = op
                 stat = "status=%s" % headers.pop('status_code', '?')
                 conv_seq = headers.get('conv-seq', '0')
 
@@ -332,6 +335,7 @@ class ContainerTracer(object):
                     msg = msgpack.unpackb(content)
                     ev_type = msg["type_"] if isinstance(msg, dict) and "type_" in msg else "?"
                     msg_type = "EVENT"
+                    sub_type = ev_type
                     frags.append("%s %s" % (msg_type, ev_type))
                     frags.append("\n C:")
                     frags.append(str(msg))
@@ -350,6 +354,7 @@ class ContainerTracer(object):
             frags = ["ERROR parsing message: %s" % str(ex)]
         log_entry["statement"] = "".join(frags)
         log_entry["msg_type"] = msg_type
+        log_entry["sub_type"] = sub_type
 
         return CallTracer._default_formatter(log_entry, **kwargs)
 

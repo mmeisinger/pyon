@@ -110,6 +110,7 @@ class CallTracer(object):
                 if tofile:
                     color = False
                 try:
+                    # Warning: Make sure formatter is reentrant. It may be called several times with the same entry
                     log_txt = formatter(log_entry, truncate=truncate, stack=stack, color=color)
                 except Exception as ex:
                     log_txt = "ERROR formatting: %s" % str(ex)
@@ -117,8 +118,11 @@ class CallTracer(object):
                 if scope and not logscope.startswith(scope):
                     continue
                 # Call it here because the formatter may have modified the entry
-                if filter and not filter(log_entry):
-                    continue
+                try:
+                    if filter and not filter(log_entry):
+                        continue
+                except Exception as ex:
+                    pass  # Filter error - ignore to make it easier to writer filters
                 if tofile:
                     f.write(log_txt)
                     f.write("\n")
@@ -137,6 +141,10 @@ class CallTracer(object):
                     break
             if count:
                 counters["SKIP"] = len(trace_data["trace_log"]) - cnt
+                if tofile:
+                    f.write("\n\nCounts: " + ", ".join(["%s=%s" % (k, counters[k]) for k in sorted(counters)]))
+                    f.write("\nElapsed time: %s s\n" % (abs(int(endts) - int(startts)) / 1000.0))
+
                 print "\nCounts:", ", ".join(["%s=%s" % (k, counters[k]) for k in sorted(counters)])
                 print "Elapsed time:", abs(int(endts) - int(startts)) / 1000.0, "s"
         finally:
