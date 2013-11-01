@@ -348,43 +348,72 @@ class IonObjectBase(object):
 class IonMessageObjectBase(IonObjectBase):
     pass
 
-def walk(o, cb, modify_key_value = 'value'):
+
+def walk(o, cb):
     """
     Utility method to do recursive walking of a possible iterable (inc dicts) and do inline transformations.
     You supply a callback which receives an object. That object may be an iterable (which will then be walked
     after you return it, as long as it remains an iterable), or it may be another object inside of that.
 
-    If a dict is discovered and
-        if modify_key_value = 'key', callback will modify only keys
-        if modify_key_value = 'key_value', callback will modify both keys and values
-        else callback will modify only values
+    If a dict is discovered, your callback will receive the dict as a whole and the contents of values only. Keys are left untouched.
 
     @TODO move to a general utils area?
     """
     newo = cb(o)
 
+    # is now or is still an iterable? iterate it.
     if isinstance(newo, dict):
-        if modify_key_value == 'key':
-            return dict(((cb(k), v) for k, v in newo.iteritems()))
-        elif modify_key_value == 'key_value':
-            return dict(((cb(k), walk(v, cb, 'key_value')) for k, v in newo.iteritems()))
-        else:
-            return dict(((k, walk(v, cb)) for k, v in newo.iteritems()))
-    elif isinstance(newo, (list, tuple, set)):
-        return [walk(x, cb, modify_key_value) for x in newo]
+        # return dict(((cb(k), v) for k, v in newo.iteritems()))
+        # return dict(((cb(k), walk(v, cb, 'key_value')) for k, v in newo.iteritems()))
+        return {k: walk(v, cb) for k, v in newo.iteritems()}
+
+    elif hasattr(newo, '__iter__'):
+        # Case list, tuple, set and other iterables
+        return [walk(x, cb) for x in newo]
+
     elif isinstance(newo, IonObjectBase):
-        # IOs are not iterable and are a huge pain to make them look iterable, special casing is fine then
         # @TODO consolidate with _validate method in IonObjectBase
         fields, set_fields = newo.__dict__, newo._schema
 
         for fieldname in set_fields:
             fieldval = getattr(newo, fieldname)
-            newfo = walk(fieldval, cb, modify_key_value)
+            newfo = walk(fieldval, cb)
             if newfo != fieldval:
-                setattr(newo, fieldname, newfo)
+                setattr(newo, fieldname, newfo)   # Careful: setattr may be doing validation
+
         return newo
+
     else:
         return newo
+
+
+def has_ion_object(obj):
+    if isinstance(obj, dict):
+        for v in obj.itervalues():
+            if has_ion_object(v):
+                return True
+    elif hasattr(obj, '__iter__'):
+        for v in obj:
+            if has_ion_object(v):
+                return True
+    elif isinstance(obj, IonObjectBase):
+        return True
+    return False
+
+def has_ion_object2(obj):
+    if isinstance(obj, dict):
+        if "type_" in obj:
+            return True
+        for v in obj.itervalues():
+            if has_ion_object2(v):
+                return True
+    elif hasattr(obj, '__iter__'):
+        for v in obj:
+            if has_ion_object2(v):
+                return True
+    elif isinstance(obj, IonObjectBase):
+        return True
+    return False
 
 
 class IonObjectSerializationBase(object):
@@ -417,7 +446,6 @@ class IonObjectSerializer(IonObjectSerializationBase):
     Used by the codec interceptor and when being written to CouchDB.
     """
 
-    serialize = IonObjectSerializationBase.operate
 
     def _transform(self, obj):
         if isinstance(obj, IonObjectBase):
@@ -427,6 +455,27 @@ class IonObjectSerializer(IonObjectSerializationBase):
             return res
 
         return obj
+
+    def serialize2(self, obj, replace=False):
+        if isinstance(obj, IonObjectBase):
+            res = {k: v for k, v in obj.__dict__.iteritems() if k in obj._schema or k in built_in_attrs}
+            res['type_'] = obj._get_type()
+            obj = res
+
+        if isinstance(obj, dict):
+            if replace or has_ion_object(obj):
+                return {k: self.serialize2(v, True) for k, v in obj.iteritems()}
+            else:
+                return obj
+        elif hasattr(obj, '__iter__'):
+            if replace or has_ion_object(obj):
+                return [self.serialize2(v, True) for v in obj]
+            else:
+                return obj
+        return obj
+
+    #serialize = IonObjectSerializationBase.operate
+    serialize = serialize2
 
 
 class IonObjectBlameSerializer(IonObjectSerializer):
@@ -452,7 +501,7 @@ class IonObjectDeserializer(IonObjectSerializationBase):
     into IonObjects. You *MUST* pass an object registry
     """
 
-    deserialize = IonObjectSerializationBase.operate
+    #deserialize = IonObjectSerializationBase.operate
 
     def __init__(self, transform_method=None, obj_registry=None, **kwargs):
         assert obj_registry
@@ -462,12 +511,12 @@ class IonObjectDeserializer(IonObjectSerializationBase):
     def _transform(self, obj):
         # Note: This check to detect an IonObject is a bit risky (only type_)
         if isinstance(obj, dict) and "type_" in obj:
-            objc    = obj.copy()
-            type    = objc['type_'].encode('ascii')
+            objc  = obj.copy()  # Not necessary?
+            otype = objc['type_'].encode('ascii')   # Correct?
 
             # don't supply a dict - we want the object to initialize with all its defaults intact,
             # which preserves things like IonEnumObject and invokes the setattr behavior we want there.
-            ion_obj = self._obj_registry.new(type)
+            ion_obj = self._obj_registry.new(otype)
             for k, v in objc.iteritems():
 
                 # CouchDB adds _attachments and puts metadata in it
@@ -481,6 +530,50 @@ class IonObjectDeserializer(IonObjectSerializationBase):
             return ion_obj
 
         return obj
+
+    def deserialize2(self, obj, replace=False):
+        if isinstance(obj, dict) and "type_" in obj:
+            otype = obj['type_'].encode('ascii')   # Correct?
+
+            # don't supply a dict - we want the object to initialize with all its defaults intact,
+            # which preserves things like IonEnumObject and invokes the setattr behavior we want there.
+            ion_obj = self._obj_registry.new(otype)
+            for k, v in obj.iteritems():
+
+                # CouchDB adds _attachments and puts metadata in it
+                # in pyon metadata is in the document
+                # so we discard _attachments while transforming between the two
+                if k not in ("type_", "_attachments", "_conflicts"):
+                    setattr(ion_obj, k, v)
+                if k == "_conflicts":
+                    log.warn("CouchDB conflict detected for ID=%S (ignored): %s", obj.get('_id', None), v)
+
+            obj = ion_obj
+
+        if isinstance(obj, dict):
+            if replace or has_ion_object2(obj):
+                return {k: self.deserialize2(v, True) for k, v in obj.iteritems()}
+            else:
+                return obj
+        elif hasattr(obj, '__iter__'):
+            if replace or has_ion_object2(obj):
+                return [self.deserialize2(v, True) for v in obj]
+            else:
+                return obj
+        elif isinstance(obj, IonObjectBase):
+            # @TODO consolidate with _validate method in IonObjectBase
+            set_fields = obj._schema
+
+            for fieldname in set_fields:
+                fieldval = getattr(obj, fieldname)
+                newfo = self.deserialize2(fieldval)
+                if newfo != fieldval:
+                    setattr(obj, fieldname, newfo)   # Careful: setattr may be doing validation
+            return obj
+        return obj
+
+    deserialize = IonObjectSerializationBase.operate
+    #deserialize = deserialize2
 
 
 class IonObjectBlameDeserializer(IonObjectDeserializer):

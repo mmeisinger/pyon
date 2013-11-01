@@ -138,12 +138,12 @@ class IonObjectRegistry(object):
         from pyon.core.bootstrap import CFG
         self.validate_setattr = CFG.get_safe('validate.setattr', False)
 
-    def new(self, _def, _dict=None, **kwargs):
-        """ See get_def() for definition lookup options. """
-        #log.debug("In IonObjectRegistry.new")
-        #log.debug("name: %s" % _def)
-        #log.debug("_dict: %s" % str(_dict))
-        #log.debug("kwargs: %s" % str(kwargs))
+    def new(self, _def, value_dict=None, **kwargs):
+        """Instantiates an IonObject based on given object type name and initial values.
+        @param _def        Name of object type
+        @param value_dict  Initial value dict/DotDict/derivative
+        @param kwargs      Additional initial values
+        """
         if _def in model_classes:
             clzz = model_classes[_def]
         elif _def in message_classes:
@@ -153,6 +153,23 @@ class IonObjectRegistry(object):
         else:
             raise NotFound("No matching class found for name %s" % _def)
 
+        #if self.validate_setattr:
+        #    def validating_setattr(self, name, value):
+        #        from pyon.core.object import built_in_attrs
+        #        if name not in self._schema and name not in built_in_attrs:
+        #            raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
+        #        def unicode_to_utf8(value):
+        #            if isinstance(value, unicode):
+        #                value = str(value.encode('utf8'))
+        #            return value
+        #        def recursive_encoding(value):
+        #            value = walk(value, unicode_to_utf8, 'key_value')
+        #            return value
+        #        self.__dict__[name] = recursive_encoding(value)
+        #
+        #    setattrmethod = validating_setattr
+        #    setattr(clzz, "__setattr__", setattrmethod)
+
         # Conditionally override the __setattr__ method to
         # include additional client side validation
         if self.validate_setattr:
@@ -160,33 +177,30 @@ class IonObjectRegistry(object):
                 from pyon.core.object import built_in_attrs
                 if name not in self._schema and name not in built_in_attrs:
                     raise AttributeError("'%s' object has no attribute '%s'" % (type(self).__name__, name))
-                def unicode_to_utf8(value):
-                    if isinstance(value, unicode):
-                        value = str(value.encode('utf8'))
-                    return value
-                def recursive_encoding(value):
-                    value = walk(value, unicode_to_utf8, 'key_value')
-                    return value
-                self.__dict__[name] = recursive_encoding(value)
+
+                if isinstance(value, unicode):
+                    self.__dict__[name] = str(value.encode('utf8'))
+                else:
+                    self.__dict__[name] = value
 
             setattrmethod = validating_setattr
             setattr(clzz, "__setattr__", setattrmethod)
 
-        if _dict:
-            # Traverse input parameters looking for dict values being passed in as
-            # the init values of complex types.  Instantiate new object and substitute
-            # into the argument dict.
-            tmpdict = deepcopy(_dict)
-            for key in tmpdict:
-                if isinstance(tmpdict[key], dict) and clzz._schema[key]["type"] in model_classes:
-                    obj_param = self.new(clzz._schema[key]["type"], tmpdict[key])
-                    tmpdict[key] = obj_param
+        if value_dict:
+            # Traverse input parameters looking for dict values being passed in as the init values of IonObjects.
+            # Instantiate new object and substitute into the argument dict.
+            tmpdict = value_dict.copy()
+            for key, value in tmpdict.iteritems():
+                if isinstance(value, dict) and clzz._schema[key]["type"] in model_classes:
+                    # Modify dict value in place
+                    tmpdict[key] = self.new(clzz._schema[key]["type"], tmpdict[key])
 
-            # Apply dict values, then override with kwargs
-            keywordargs = tmpdict
-            keywordargs.update(kwargs)
-            obj = clzz(**keywordargs)
+            # Override values with kwargs (do not assume IonObjects in kwargs)
+            tmpdict.update(deepcopy(kwargs))
+            new_values = deepcopy(tmpdict)   # Anything nested/IonObject could be in here - no risk
+            obj = clzz(**new_values)
         else:
-            obj = clzz(**kwargs)
+            new_values = deepcopy(kwargs)
+            obj = clzz(**new_values)
 
         return obj
