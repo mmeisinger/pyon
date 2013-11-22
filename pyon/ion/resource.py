@@ -17,6 +17,7 @@ from pyon.util.containers import DotDict, named_any, get_ion_ts
 from pyon.util.execute import get_method_arguments, get_remote_info, execute_method
 from pyon.util.log import log
 
+import interface.objects
 
 # Object Types
 ObjectTypes = DotDict()
@@ -809,12 +810,28 @@ class ExtendedResourceContainer(object):
         assoc_list = []
         if backward:
             by_object = self.ctx['by_object'].get((resource_id,predicate), [])
-            assoc_list.extend([(assoc.s, assoc) for assoc in by_object if not target_type or assoc.st in target_type])
+            assoc_list.extend([(assoc.s, assoc) for assoc in by_object if self._is_target_type(assoc.st, target_type)])
         else:
             by_subject = self.ctx['by_subject'].get((resource_id,predicate), [])
-            assoc_list.extend([(assoc.o, assoc) for assoc in by_subject if not target_type or assoc.ot in target_type])
+            assoc_list.extend([(assoc.o, assoc) for assoc in by_subject if self._is_target_type(assoc.ot, target_type)])
         return assoc_list
 
+    def _is_target_type(self, res_type, target_type):
+        """Returns True if res_type one of its base types is in the target_type list"""
+        if not target_type:
+            return True
+        try:
+            if hasattr(interface.objects, res_type):
+                rt_cls = getattr(interface.objects, res_type)
+                cls_extends = rt_cls._get_extends()
+                for tt in target_type:
+                    if tt in cls_extends:
+                        return True
+                return False
+        except Exception as ex:
+            pass
+
+        return res_type in target_type
 
     def execute_method_with_resource(self, resource_id, method_name, **kwargs):
 

@@ -14,7 +14,7 @@ from pyon.util.log import log
 from pyon.core.exception import BadRequest
 
 
-built_in_attrs = set(['_id', '_rev', 'type_', 'blame_'])
+built_in_attrs = {'_id', '_rev', 'type_', 'blame_'}
 
 class IonObjectBase(object):
 
@@ -60,6 +60,15 @@ class IonObjectBase(object):
 
     def has_key(self, key):
         return hasattr(self, key)
+
+    @classmethod
+    def _get_type(cls):
+        return cls.__name__
+
+    @classmethod
+    def _get_extends(cls):
+        parents = [parent.__name__ for parent in cls.__mro__ if parent.__name__ not in ['IonObjectBase', 'object', cls._get_type()]]
+        return parents
 
     def _validate(self):
         """
@@ -194,13 +203,6 @@ class IonObjectBase(object):
                 for subval in field_val:
                     if isinstance(subval, IonObjectBase):
                         subval._validate()
-
-    def _get_type(self):
-        return self.__class__.__name__
-
-    def _get_extends(self):
-        parents = [parent.__name__ for parent in self.__class__.__mro__ if parent.__name__ not in ['IonObjectBase', 'object', self._get_type()]]
-        return parents
 
     def update(self, other):
         """
