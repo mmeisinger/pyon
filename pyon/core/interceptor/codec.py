@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from pyon.core.interceptor.interceptor import Interceptor
 from pyon.core.bootstrap import get_obj_registry
 from pyon.core.object import IonObjectDeserializer, IonObjectSerializer, IonObjectBlameDeserializer, IonObjectBlameSerializer
@@ -16,20 +18,20 @@ class CodecInterceptor(Interceptor):
     def outgoing(self, invocation):
         log.debug("CodecInterceptor.outgoing: %s", invocation)
 
-        log.debug("Payload, pre-transform: %s", invocation.message)
-        invocation.message = self._io_serializer.serialize(invocation.message)
-        log.debug("Payload, post-transform: %s", invocation.message)
+        #log.debug("Payload, pre-transform: %s", invocation.message)
+        #invocation.message = self._io_serializer.serialize(invocation.message)
+        #log.debug("Payload, post-transform: %s", invocation.message)
 
         return invocation
 
     def incoming(self, invocation):
         log.debug("CodecInterceptor.incoming: %s", invocation)
 
-        payload = invocation.message
-        log.debug("Payload, pre-transform: %s", payload)
-
-        invocation.message = self._io_deserializer.deserialize(payload)
-        log.debug("Payload, post-transform: %s", invocation.message)
+        #payload = invocation.message
+        #log.debug("Payload, pre-transform: %s", payload)
+        #
+        #invocation.message = self._io_deserializer.deserialize(payload)
+        #log.debug("Payload, post-transform: %s", invocation.message)
 
         return invocation
 

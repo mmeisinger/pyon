@@ -6,9 +6,11 @@ from types import NoneType
 import time
 import copy
 from nose.plugins.attrib import attr
+import json
 
 from pyon.util.unit_test import IonUnitTestCase
-from pyon.core.object import IonObjectBase
+from pyon.core.bootstrap import get_obj_registry
+from pyon.core.object import IonObjectBase, built_in_attrs
 from pyon.util.log import log
 
 
@@ -170,3 +172,77 @@ class ObjectPerfTest(IonUnitTestCase):
         recursive_encode1(o2)
         t2 = time.time()
         log.info("Time recursive_utf8encode1: %s", (t2-t1))
+
+    def test_dict_perf(self):
+        t1 = time.time()
+        d = create_test_object(1, 100000, do_list=False)
+        t2 = time.time()
+        log.info("Time dict create: %s", (t2-t1))
+
+        t1 = time.time()
+        {k:v for k,v in d.iteritems()}
+        t2 = time.time()
+        log.info("Time dict literal: %s", (t2-t1))
+
+        t1 = time.time()
+        {k:v for k,v in d.iteritems() if k not in built_in_attrs}
+        t2 = time.time()
+        log.info("Time dict literal with check: %s", (t2-t1))
+
+        t1 = time.time()
+        d1 = d.copy()
+        t2 = time.time()
+        log.info("Time dict copy: %s", (t2-t1))
+
+        t1 = time.time()
+        d2 = d.copy()
+        for k in d2.iterkeys():
+            if k in built_in_attrs:
+                del d2[k]
+        t2 = time.time()
+        log.info("Time dict copy with check: %s", (t2-t1))
+
+        t1 = time.time()
+        d2 = d.copy()
+        for k in built_in_attrs:
+            try:
+                del d2[k]
+            except KeyError:
+                pass
+        t2 = time.time()
+        log.info("Time dict copy with remove: %s", (t2-t1))
+
+    def test_ion_encode(self):
+        obj_registry = get_obj_registry()
+
+        def ion_object_encode(obj):
+            if isinstance(obj, IonObjectBase):
+                return obj.__dict__
+            raise TypeError(repr(obj) + " is not JSON serializable")
+
+        def ion_object_decode(obj):
+            if "type_" in obj:
+                ion_obj = obj_registry.new(obj["type_"])
+                for k, v in obj.iteritems():
+                    if k not in {"type_", "_attachments", "_conflicts"}:
+                        setattr(ion_obj, k, v)
+                    if k == "_conflicts":
+                        log.warn("CouchDB conflict detected for ID=%S (ignored): %s", obj.get('_id', None), v)
+                return ion_obj
+            return obj
+
+        from interface.objects import Resource, DataProduct
+        res_obj = DataProduct(name="Test resource")
+
+        obj = [res_obj, "Some str", {}, False]
+        jobj = json.dumps(obj, default=ion_object_encode)
+
+        print jobj
+
+
+        o1 = json.loads(jobj, object_hook=ion_object_decode)
+        print o1
+
+        #res_obj1 = Resource(name="Test resource1")
+        #test_obj = create_test_object(2, 30, do_list=True, uvals=True, ukeys=True)
+        #res_obj1.addl["some"] = test_obj
