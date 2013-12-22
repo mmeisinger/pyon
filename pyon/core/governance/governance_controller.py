@@ -388,7 +388,7 @@ class GovernanceController(object):
         self._policy_update_log = self._policy_update_log[-100:]
         self._policy_snapshot = policy_now
 
-        log.info("Policy update logged. Type=%s, message=%s, changed=%s" % (update_type, message, any_change))
+        log.debug("Policy update logged. Type=%s, message=%s, changed=%s" % (update_type, message, any_change))
 
     def update_container_policies(self, process_instance, safe_mode=False):
         """
