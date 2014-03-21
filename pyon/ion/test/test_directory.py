@@ -5,10 +5,11 @@ __license__ = 'Apache 2.0'
 
 from nose.plugins.attrib import attr
 
-from pyon.core.bootstrap import CFG
-from pyon.ion.directory import Directory
 from pyon.util.unit_test import IonUnitTestCase
+from pyon.core.bootstrap import CFG
+from pyon.core.exception import BadRequest, NotFound
 from pyon.datastore.datastore import DatastoreManager
+from pyon.ion.directory import Directory
 
 from interface.objects import DirEntry
 
@@ -143,5 +144,35 @@ class TestDirectory(IonUnitTestCase):
         self.assertEquals(1, len(res_list))
         self.assertEquals("NEW", res_list[0].attributes["unique"])
 
+
+
+    def test_directory_lock(self):
+        dsm = DatastoreManager()
+        ds = dsm.get_datastore("resources", "DIRECTORY")
+        ds.delete_datastore()
+        ds.create_datastore()
+
+        directory = Directory(datastore_manager=dsm)
+        directory.start()
+
+        lock1 = directory.acquire_lock("LOCK1", lock_info=dict(process="proc1"))
+        self.assertEquals(lock1, True)
+
+        lock2 = directory.acquire_lock("LOCK1", lock_info=dict(process="proc2"))
+        self.assertEquals(lock2, False)
+
+        with self.assertRaises(BadRequest):
+            directory.acquire_lock("LOCK/SOME")
+
+        with self.assertRaises(BadRequest):
+            directory.release_lock("LOCK/SOME")
+
+        with self.assertRaises(NotFound):
+            directory.release_lock("LOCK2")
+
+        directory.release_lock("LOCK1")
+
+        lock1 = directory.acquire_lock("LOCK1", lock_info=dict(process="proc3"))
+        self.assertEquals(lock1, True)
 
         directory.stop()

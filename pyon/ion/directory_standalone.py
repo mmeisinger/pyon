@@ -133,6 +133,15 @@ class DirectoryStandalone(object):
 
         return entry_old
 
+    def register_safe(self, parent, key, **kwargs):
+        """
+        Use this method to protect caller from any form of directory register error
+        """
+        try:
+            return self.register(parent, key, **kwargs)
+        except Exception as ex:
+            pass
+
     def register_mult(self, entries):
         """
         Registers multiple directory entries efficiently in one datastore access.

@@ -58,6 +58,7 @@ class InterfaceAdmin:
                 ds.create_datastore(datastore_name=local_dsn, profile=profile)
                 count += 1
                 ds_created.append(local_dsn)
+
         print "store_interfaces: Created %s datastores: %s" % (count, ds_created)
 
 
@@ -65,12 +66,19 @@ class InterfaceAdmin:
         """
         Main entry point into storing system config
         """
+        # Register some default keys
+        self.dir.register_safe("/", "Agents", description="Running agents", create_only=True)
+        self.dir.register_safe("/", "Config", description="System configuration", create_only=True)
+        self.dir.register_safe("/", "System", description="System management information", create_only=True)
+        self.dir.register_safe("/System", "Locks", description="System exclusive locks", create_only=True)
+
         de = self.dir.lookup(self.DIR_CONFIG_PATH + "/CFG")
         if de:
             print "store_interfaces: Updating system config in directory..."
         else:
             print "store_interfaces: Storing system config in directory..."
         self.dir.register(self.DIR_CONFIG_PATH, "CFG", **deepcopy(system_cfg))
+
 
     def store_interfaces(self, object_definition_file=None,
                          service_definition_file=None, idempotent=True):

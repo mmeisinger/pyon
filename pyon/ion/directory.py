@@ -7,7 +7,7 @@ __license__ = 'Apache 2.0'
 
 from pyon.core import bootstrap
 from pyon.core.bootstrap import CFG
-from pyon.core.exception import Inconsistent, BadRequest
+from pyon.core.exception import Inconsistent, BadRequest, NotFound
 from pyon.datastore.datastore import DataStore
 from pyon.ion.event import EventPublisher, EventSubscriber
 from pyon.ion.identifier import create_unique_directory_id
@@ -339,24 +339,55 @@ class Directory(object):
         pass
 
     # ------------------------------------------
+    # Concurrency Control
+    # ------------------------------------------
+
+    def acquire_lock(self, key, lock_info=None):
+        """
+        Attempts to atomically acquire a lock with the given key and namespace.
+        """
+        if not key:
+            raise BadRequest("Illegal arguments")
+        if "/" in key:
+            raise BadRequest("Illegal arguments: key")
+
+        direntry = self._create_dir_entry("/System/Locks", key, attributes=lock_info)
+        lock_result = True
+        try:
+            # This is the atomic operation. It relies on the unique key constraint of the directory service
+            self.dir_store.create(direntry, create_unique_directory_id())
+        except BadRequest as ex:
+            if ex.message.endswith("already exists"):
+                lock_result = False
+            else:
+                raise
+
+        log.debug("Directory.acquire_lock(%s): %s -> %s", key, lock_info, lock_result)
+
+        return lock_result
+
+    def release_lock(self, key):
+        """
+        Releases lock identified by key.
+        Raises NotFound if lock does not exist.
+        """
+        if not key:
+            raise BadRequest("Illegal arguments")
+        if "/" in key:
+            raise BadRequest("Illegal arguments: key")
+
+        log.debug("Directory.release_lock(%s)", key)
+
+        dir_entry = self.lookup("/System/Locks", key, return_entry=True)
+        if dir_entry:
+            self.dir_store.delete(dir_entry._id)
+        else:
+            raise NotFound("Lock %s not found" % key)
+
+
+    # ------------------------------------------
     # Specific directory entry methods
     # ------------------------------------------
-    # Internal methods
-    def _assert_existence(self, parent, key, **kwargs):
-        """
-        Make sure an entry is in the directory.
-        @retval True if entry existed
-        """
-        dn = self._get_path(parent, key)
-        direntry = self._safe_read(dn)
-        existed = bool(direntry)
-        if not direntry:
-            cur_time = get_ion_ts()
-            parent_dn = self._get_path(parent)
-            direntry = DirEntry(parent=parent_dn, key=key, attributes=kwargs, ts_created=cur_time, ts_updated=cur_time)
-            # TODO: This may fail because of concurrent create
-            self.dir_store.create(direntry, dn)
-        return existed
 
     def receive_directory_change_event(self, event_msg, headers):
         # @TODO add support to fold updated config into container config
