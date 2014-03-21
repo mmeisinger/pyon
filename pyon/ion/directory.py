@@ -131,7 +131,7 @@ class Directory(object):
 
                 if self.events_enabled and self.container.has_capability(CCAP.EXCHANGE_MANAGER):
                     self.event_pub.publish_event(event_type="DirectoryModifiedEvent",
-                                                 origin=self.orgname + ".DIR",
+                                                 origin=self.orgname + ".DIR", origin_type="DIR",
                                                  key=key, parent=parent, org=self.orgname,
                                                  sub_type="REGISTER." + parent[1:].replace("/", "."),
                                                  mod_type=DirectoryModificationType.UPDATE)
@@ -155,7 +155,7 @@ class Directory(object):
                 self.dir_store.create(direntry, create_unique_directory_id())
                 if self.events_enabled and self.container.has_capability(CCAP.EXCHANGE_MANAGER):
                     self.event_pub.publish_event(event_type="DirectoryModifiedEvent",
-                                                 origin=self.orgname + ".DIR",
+                                                 origin=self.orgname + ".DIR", origin_type="DIR",
                                                  key=key, parent=parent, org=self.orgname,
                                                  sub_type="REGISTER." + parent[1:].replace("/", "."),
                                                  mod_type=DirectoryModificationType.CREATE)
@@ -193,6 +193,15 @@ class Directory(object):
         deid_list = [create_unique_directory_id() for i in xrange(len(de_list))]
         self.dir_store.create_mult(de_list, deid_list)
 
+        if self.events_enabled and self.container.has_capability(CCAP.EXCHANGE_MANAGER):
+            for de in de_list:
+                self.event_pub.publish_event(event_type="DirectoryModifiedEvent",
+                                             origin=self.orgname + ".DIR", origin_type="DIR",
+                                             key=de.key, parent=de.parent, org=self.orgname,
+                                             sub_type="REGISTER." + de.parent[1:].replace("/", "."),
+                                             mod_type=DirectoryModificationType.CREATE)
+
+
     def unregister(self, parent, key=None, return_entry=False):
         """
         Remove entry from directory.
@@ -206,7 +215,7 @@ class Directory(object):
             self.dir_store.delete(direntry)
             if self.events_enabled and self.container.has_capability(CCAP.EXCHANGE_MANAGER):
                 self.event_pub.publish_event(event_type="DirectoryModifiedEvent",
-                                             origin=self.orgname + ".DIR",
+                                             origin=self.orgname + ".DIR", origin_type="DIR",
                                              key=key, parent=parent, org=self.orgname,
                                              sub_type="UNREGISTER." + parent[1:].replace("/", "."),
                                              mod_type=DirectoryModificationType.DELETE)
