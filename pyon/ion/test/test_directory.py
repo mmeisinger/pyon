@@ -23,7 +23,7 @@ class TestDirectory(IonUnitTestCase):
         ds.delete_datastore()
         ds.create_datastore()
 
-        directory = Directory(datastore_manager=dsm)
+        directory = Directory(datastore_manager=dsm, events_enabled=False)
         directory.start()
 
         #self.addCleanup(directory.dir_store.delete_datastore)
@@ -110,7 +110,17 @@ class TestDirectory(IonUnitTestCase):
         res_list = directory.find_by_key("X", parent="/BranchB")
         self.assertEquals(len(res_list), 1)
 
-        # Test _cleanup_outdated_entries
+        entry_list = directory.lookup_mult("/BranchA", ["X", "Z"])
+        self.assertEquals(len(entry_list), 2)
+        self.assertEquals(entry_list[0]["resource_id"], "rid1")
+        self.assertEquals(entry_list[1]["resource_id"], "rid3")
+
+        entry_list = directory.lookup_mult("/BranchA", ["Y", "FOO"])
+        self.assertEquals(len(entry_list), 2)
+        self.assertEquals(entry_list[0]["resource_id"], "rid2")
+        self.assertEquals(entry_list[1], None)
+
+        # Test prevent duplicate entries
         directory.register("/some", "dupentry", foo="ingenious")
         de = directory.lookup("/some/dupentry", return_entry=True)
         de1_attrs = de.__dict__.copy()
@@ -118,33 +128,12 @@ class TestDirectory(IonUnitTestCase):
         del de1_attrs["_rev"]
         del de1_attrs["type_"]
         de1 = DirEntry(**de1_attrs)
-        de_id1,_ = directory.dir_store.create(de1)
+        with self.assertRaises(BadRequest) as ex:
+            de_id1,_ = directory.dir_store.create(de1)
+            self.assertTrue(ex.message.endswith("already exists"))
 
-        res_list = directory.find_by_key("dupentry", parent="/some")
-        self.assertEquals(2, len(res_list))
-
-        de = directory.lookup("/some/dupentry", return_entry=True)
         res_list = directory.find_by_key("dupentry", parent="/some")
         self.assertEquals(1, len(res_list))
-
-        de1_attrs = de.__dict__.copy()
-        del de1_attrs["_id"]
-        del de1_attrs["_rev"]
-        del de1_attrs["type_"]
-        de1_attrs["ts_updated"] = str(int(de1_attrs["ts_updated"]) + 10)
-        de1_attrs["attributes"]["unique"] = "NEW"
-        de1 = DirEntry(**de1_attrs)
-        de_id1,_ = directory.dir_store.create(de1)
-
-        res_list = directory.find_by_key("dupentry", parent="/some")
-        self.assertEquals(2, len(res_list))
-
-        de = directory.lookup("/some/dupentry", return_entry=True)
-        res_list = directory.find_by_key("dupentry", parent="/some")
-        self.assertEquals(1, len(res_list))
-        self.assertEquals("NEW", res_list[0].attributes["unique"])
-
-
 
     def test_directory_lock(self):
         dsm = DatastoreManager()
@@ -152,7 +141,7 @@ class TestDirectory(IonUnitTestCase):
         ds.delete_datastore()
         ds.create_datastore()
 
-        directory = Directory(datastore_manager=dsm)
+        directory = Directory(datastore_manager=dsm, events_enabled=False)
         directory.start()
 
         lock1 = directory.acquire_lock("LOCK1", lock_info=dict(process="proc1"))
